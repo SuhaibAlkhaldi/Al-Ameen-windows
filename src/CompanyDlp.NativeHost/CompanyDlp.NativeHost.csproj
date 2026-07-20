@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\CompanyDlp.Contracts\CompanyDlp.Contracts.csproj" />
+    <ProjectReference Include="..\CompanyDlp.BrowserBridge\CompanyDlp.BrowserBridge.csproj" />
+  </ItemGroup>
+</Project>

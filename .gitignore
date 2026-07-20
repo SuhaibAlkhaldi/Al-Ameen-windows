@@ -1,0 +1,22 @@
+.vs/
+bin/
+obj/
+artifacts/
+*.user
+*.suo
+*.pfx
+*.pem
+browser-extension/build/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.tmp
+*.temp
+*.before-*
+
+# Development runtime files
+.development/
+config/policy.development.json
+config/*.development.json

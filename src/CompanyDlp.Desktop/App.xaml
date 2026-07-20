@@ -1,0 +1,18 @@
+<Application x:Class="CompanyDlp.Desktop.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             ShutdownMode="OnExplicitShutdown">
+  <Application.Resources>
+    <SolidColorBrush x:Key="BackgroundBrush" Color="#0F172A"/>
+    <SolidColorBrush x:Key="PanelBrush" Color="#172033"/>
+    <SolidColorBrush x:Key="PanelBorderBrush" Color="#334155"/>
+    <SolidColorBrush x:Key="PrimaryBrush" Color="#38BDF8"/>
+    <SolidColorBrush x:Key="SuccessBrush" Color="#4ADE80"/>
+    <SolidColorBrush x:Key="WarningBrush" Color="#FBBF24"/>
+    <Style TargetType="Button">
+      <Setter Property="Padding" Value="14,9"/>
+      <Setter Property="Margin" Value="0,5,8,5"/>
+      <Setter Property="Cursor" Value="Hand"/>
+    </Style>
+  </Application.Resources>
+</Application>

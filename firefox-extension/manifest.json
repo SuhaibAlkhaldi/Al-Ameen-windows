@@ -1,0 +1,45 @@
+{
+  "manifest_version": 2,
+  "name": "Company DLP Browser Protection",
+  "version": "3.0.0",
+  "description": "Blocks browser-wide file picker, drag/drop, paste and real File upload paths; transport enforcement is silent; the tiled watermark is rendered only by the Windows desktop overlay to prevent iframe duplication.",
+  "permissions": [
+    "storage",
+    "nativeMessaging",
+    "downloads",
+    "tabs",
+    "<all_urls>"
+  ],
+  "background": {
+    "scripts": [
+      "background-firefox.js"
+    ],
+    "persistent": false
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "page-guard-injector.js",
+        "content.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true
+    }
+  ],
+  "web_accessible_resources": [
+    "page-guard.js"
+  ],
+  "browser_action": {
+    "default_title": "Company DLP is managed by your organization"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "company-dlp@company.local",
+      "strict_min_version": "109.0"
+    }
+  }
+}

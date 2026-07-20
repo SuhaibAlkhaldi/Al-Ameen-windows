@@ -1,0 +1,278 @@
+openapi: 3.1.0
+info:
+  title: Company DLP Agent API
+  version: 1.0.0
+  description: Stable backend contract consumed by Company DLP Windows Ready v1.
+servers:
+  - url: https://dlp-api.company.example
+security:
+  - deviceBearer: []
+paths:
+  /api/v1/agent/enroll:
+    post:
+      security: []
+      operationId: enrollAgent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentEnrollmentRequest' }
+      responses:
+        '200':
+          description: Device enrolled.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentEnrollmentResponse' }
+  /api/v1/agent/heartbeat:
+    post:
+      operationId: agentHeartbeat
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentHeartbeatRequest' }
+      responses:
+        '200':
+          description: Heartbeat accepted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentHeartbeatResponse' }
+  /api/v1/agent/policy:
+    get:
+      operationId: getEffectivePolicy
+      parameters:
+        - { in: query, name: tenantId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: deviceId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: currentVersion, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        '200':
+          description: New signed snapshot.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SignedPolicySnapshot' }
+        '204': { description: No newer policy. }
+        '304': { description: No newer policy. }
+  /api/v1/agent/events/batch:
+    post:
+      operationId: ingestAuditBatch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AuditBatchRequest' }
+      responses:
+        '200':
+          description: Per-event acknowledgement.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuditBatchResponse' }
+  /api/v1/agent/file-classification:
+    post:
+      operationId: classifyFile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FileClassificationRequest' }
+      responses:
+        '200':
+          description: Classification decision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FileClassificationResult' }
+  /api/v1/agent/file-keys/wrap:
+    post:
+      operationId: wrapFileKey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FileKeyWrapRequest' }
+      responses:
+        '200':
+          description: Wrapped file DEK.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FileKeyWrapResponse' }
+  /api/v1/agent/file-keys/unwrap:
+    post:
+      operationId: unwrapFileKey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FileKeyUnwrapRequest' }
+      responses:
+        '200':
+          description: Authorized plaintext DEK response. Never log this payload.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FileKeyUnwrapResponse' }
+components:
+  securitySchemes:
+    deviceBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque-device-token
+  schemas:
+    AgentEnrollmentRequest:
+      type: object
+      required: [tenantId, deviceId, machineName, agentVersion, enrollmentCode]
+      properties:
+        tenantId: { type: string, format: uuid }
+        deviceId: { type: string, format: uuid }
+        machineName: { type: string, maxLength: 256 }
+        agentVersion: { type: string, maxLength: 50 }
+        enrollmentCode: { type: string, maxLength: 512 }
+    AgentEnrollmentResponse:
+      type: object
+      required: [accessToken, expiresAtUtc]
+      properties:
+        accessToken: { type: string }
+        expiresAtUtc: { type: string, format: date-time }
+    AgentHeartbeatRequest:
+      type: object
+      required: [tenantId, deviceId, machineName, agentVersion, sentAtUtc, lastAppliedPolicyVersion, pendingAuditEventCount]
+      properties:
+        tenantId: { type: string, format: uuid }
+        deviceId: { type: string, format: uuid }
+        machineName: { type: string }
+        agentVersion: { type: string }
+        osVersion: { type: string }
+        sentAtUtc: { type: string, format: date-time }
+        lastAppliedPolicyVersion: { type: integer, format: int64 }
+        pendingAuditEventCount: { type: integer }
+    AgentHeartbeatResponse:
+      type: object
+      required: [serverTimeUtc, policyRefreshRequired]
+      properties:
+        serverTimeUtc: { type: string, format: date-time }
+        policyRefreshRequired: { type: boolean }
+    SignedPolicySnapshot:
+      type: object
+      required: [policyId, version, tenantId, deviceId, issuedAtUtc, expiresAtUtc, policy, signatureAlgorithm, signatureBase64]
+      properties:
+        policyId: { type: string, format: uuid }
+        version: { type: integer, format: int64 }
+        tenantId: { type: string, format: uuid }
+        deviceId: { type: string, format: uuid }
+        issuedAtUtc: { type: string, format: date-time }
+        expiresAtUtc: { type: string, format: date-time }
+        policy: { type: object, additionalProperties: true }
+        signatureAlgorithm: { type: string, enum: [ECDSA-SHA256] }
+        signatureBase64: { type: string }
+    AuditBatchRequest:
+      type: object
+      required: [tenantId, deviceId, agentVersion, events]
+      properties:
+        tenantId: { type: string, format: uuid }
+        deviceId: { type: string, format: uuid }
+        agentVersion: { type: string }
+        events:
+          type: array
+          maxItems: 500
+          items: { $ref: '#/components/schemas/SecurityEventEnvelope' }
+    AuditBatchResponse:
+      type: object
+      required: [acceptedEventIds, duplicateEventIds, rejectedEvents]
+      properties:
+        acceptedEventIds: { type: array, items: { type: string, format: uuid } }
+        duplicateEventIds: { type: array, items: { type: string, format: uuid } }
+        rejectedEvents:
+          type: array
+          items:
+            type: object
+            required: [eventId, reasonCode, retryable]
+            properties:
+              eventId: { type: string, format: uuid }
+              reasonCode: { type: string }
+              retryable: { type: boolean }
+    SecurityEventEnvelope:
+      type: object
+      required: [eventId, correlationId, protocolVersion, eventSchemaVersion, tenantId, deviceId, actionKey, eventType, decision, reasonCode, occurredAtUtc, agentVersion, integrityHash]
+      properties:
+        eventId: { type: string, format: uuid }
+        correlationId: { type: string, format: uuid }
+        protocolVersion: { type: string, const: '1.0' }
+        eventSchemaVersion: { type: string, const: '1.0' }
+        tenantId: { type: string, format: uuid }
+        deviceId: { type: string, format: uuid }
+        userId: { type: [string, 'null'], format: uuid }
+        userSid: { type: string }
+        username: { type: string }
+        machineName: { type: string }
+        windowsSessionId: { type: integer }
+        actionKey: { type: string }
+        eventType: { type: string }
+        decision: { type: string, enum: [Allow, Block, Audit, Error] }
+        reasonCode: { type: string }
+        policyId: { type: [string, 'null'], format: uuid }
+        policyVersion: { type: [integer, 'null'], format: int64 }
+        ruleId: { type: string }
+        permissionGrantId: { type: [string, 'null'], format: uuid }
+        sourceProcess: { type: [object, 'null'], additionalProperties: true }
+        resource: { type: [object, 'null'], additionalProperties: true }
+        destination: { type: [object, 'null'], additionalProperties: true }
+        details: { type: object, additionalProperties: true }
+        occurredAtUtc: { type: string, format: date-time }
+        agentVersion: { type: string }
+        osVersion: { type: string }
+        isDevelopmentEvent: { type: boolean }
+        integrityHash: { type: string, pattern: '^[0-9A-Fa-f]{64}$' }
+    FileClassificationRequest:
+      type: object
+      required: [requestId, tenantId, deviceId, fileName, sizeBytes, channel, destination, requestedAtUtc]
+      properties:
+        requestId: { type: string, format: uuid }
+        tenantId: { type: string, format: uuid }
+        deviceId: { type: string, format: uuid }
+        userSid: { type: string }
+        fileName: { type: string }
+        extension: { type: string }
+        sizeBytes: { type: integer, format: int64 }
+        mimeType: { type: string }
+        sha256: { type: string }
+        channel: { type: string }
+        destination: { type: string }
+        requestedAtUtc: { type: string, format: date-time }
+    FileClassificationResult:
+      type: object
+      required: [requestId, isAllowed, isSensitive, classification, reasonCode, provider, evaluatedAtUtc]
+      properties:
+        requestId: { type: string, format: uuid }
+        isAllowed: { type: boolean }
+        isSensitive: { type: boolean }
+        classification: { type: string }
+        reasonCode: { type: string }
+        provider: { type: string }
+        ruleId: { type: string }
+        evaluatedAtUtc: { type: string, format: date-time }
+        validUntilUtc: { type: [string, 'null'], format: date-time }
+    FileKeyWrapRequest:
+      type: object
+      required: [tenantId, deviceId, fileId, plainKeyBase64]
+      properties:
+        tenantId: { type: string, format: uuid }
+        deviceId: { type: string, format: uuid }
+        fileId: { type: string, format: uuid }
+        plainKeyBase64: { type: string, writeOnly: true }
+    FileKeyWrapResponse:
+      type: object
+      required: [keyId, wrappedKeyBase64]
+      properties:
+        keyId: { type: string }
+        wrappedKeyBase64: { type: string }
+    FileKeyUnwrapRequest:
+      type: object
+      required: [tenantId, deviceId, fileId, keyId, wrappedKeyBase64]
+      properties:
+        tenantId: { type: string, format: uuid }
+        deviceId: { type: string, format: uuid }
+        fileId: { type: string, format: uuid }
+        keyId: { type: string }
+        wrappedKeyBase64: { type: string }
+    FileKeyUnwrapResponse:
+      type: object
+      required: [plainKeyBase64]
+      properties:
+        plainKeyBase64: { type: string, writeOnly: true }

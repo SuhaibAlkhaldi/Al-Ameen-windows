@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "properties": {
+    "developmentHttpFallback": {
+      "title": "Enable the loopback development bridge when the unsigned native host is blocked",
+      "description": "Development-only. Production policy must leave this false or unset.",
+      "type": "boolean"
+    }
+  }
+}

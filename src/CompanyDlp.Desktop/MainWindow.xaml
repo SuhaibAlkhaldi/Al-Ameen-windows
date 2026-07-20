@@ -1,0 +1,114 @@
+<Window x:Class="CompanyDlp.Desktop.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Company DLP" Width="1120" Height="760" MinWidth="980" MinHeight="660"
+        Background="{StaticResource BackgroundBrush}" Foreground="White"
+        WindowStartupLocation="CenterScreen">
+  <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <Grid Margin="28">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="Auto"/>
+      </Grid.RowDefinitions>
+
+      <StackPanel>
+        <TextBlock Text="Company Data Loss Prevention" FontSize="30" FontWeight="SemiBold"/>
+        <TextBlock Text="Development tester and endpoint agent" Foreground="#94A3B8" Margin="0,5,0,0"/>
+      </StackPanel>
+
+      <Border Grid.Row="1" Margin="0,24,0,18" Padding="18" CornerRadius="12"
+              Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1">
+        <Grid>
+          <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <StackPanel>
+            <TextBlock Text="Service and environment" Foreground="#94A3B8"/>
+            <TextBlock x:Name="StatusText" Text="Connecting…" FontSize="21" FontWeight="SemiBold" Margin="0,5,0,0"/>
+            <TextBlock x:Name="ServiceDetailsText" Foreground="#94A3B8" Margin="0,5,0,0" TextWrapping="Wrap"/>
+          </StackPanel>
+          <Ellipse x:Name="StatusIndicator" Grid.Column="1" Width="22" Height="22" Fill="{StaticResource WarningBrush}" VerticalAlignment="Center"/>
+        </Grid>
+      </Border>
+
+      <Border Grid.Row="2" Padding="18" CornerRadius="12" Background="{StaticResource PanelBrush}"
+              BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1">
+        <StackPanel>
+          <TextBlock Text="Development test session" FontSize="19" FontWeight="SemiBold"/>
+          <TextBlock Text="Start applies temporary HKCU browser policies, local clipboard/screenshot protection and watermark. Stop restores the previous browser policy values and removes the test profiles." Foreground="#94A3B8" TextWrapping="Wrap" Margin="0,7,0,10"/>
+          <WrapPanel>
+            <Button x:Name="StartTestButton" Content="Start test session" Click="StartTest_Click"/>
+            <Button x:Name="StopTestButton" IsEnabled="False" Content="Stop and restore PC" Click="StopTest_Click"/>
+            <Button Content="Launch protected Edge" Click="LaunchEdge_Click"/>
+            <Button Content="Launch protected Chrome" Click="LaunchChrome_Click"/>
+            <Button Content="Emergency restore" Click="EmergencyRestore_Click"/>
+            <Button Content="Test alert" Click="TestAlert_Click"/>
+          </WrapPanel>
+          <TextBlock x:Name="TestSessionStatusText" Text="No active test session" Foreground="#94A3B8" Margin="0,8,0,0"/>
+        </StackPanel>
+      </Border>
+
+      <Grid Grid.Row="3" Margin="0,18,0,0">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="18"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="18"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+
+        <Border Padding="18" CornerRadius="12" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1">
+          <StackPanel>
+            <TextBlock Text="Clipboard and sensitive data" FontSize="18" FontWeight="SemiBold"/>
+            <TextBlock x:Name="ClipboardStatusText" Text="Stopped" Foreground="#94A3B8" Margin="0,8,0,0" TextWrapping="Wrap"/>
+            <TextBlock Text="Rules are read from config/policy.development.json. Blocked copy attempts display a clear user alert with the matching reason." Foreground="#94A3B8" Margin="0,8,0,0" TextWrapping="Wrap"/>
+          </StackPanel>
+        </Border>
+
+        <Border Grid.Column="2" Padding="18" CornerRadius="12" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1">
+          <StackPanel>
+            <TextBlock Text="Screenshot and watermark" FontSize="18" FontWeight="SemiBold"/>
+            <TextBlock x:Name="ScreenStatusText" Text="Stopped" Foreground="#94A3B8" Margin="0,8,0,0" TextWrapping="Wrap"/>
+            <TextBlock x:Name="WatermarkStatusText" Text="Stopped" Foreground="#94A3B8" Margin="0,6,0,0" TextWrapping="Wrap"/>
+          </StackPanel>
+        </Border>
+
+        <Border Grid.Row="2" Padding="18" CornerRadius="12" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1">
+          <StackPanel>
+            <TextBlock Text="USB protection" FontSize="18" FontWeight="SemiBold"/>
+            <TextBlock Text="Any real keyboard or mouse is allowed. Newly connected non-input USB devices are audited or blocked. Existing devices at first run form the trusted baseline to avoid disabling built-in laptop hardware." Foreground="#94A3B8" Margin="0,8,0,10" TextWrapping="Wrap"/>
+            <WrapPanel>
+              <Button x:Name="TemporaryUsbBlockButton" Content="Enable USB Block for 5 minutes" Click="TemporaryUsbBlock_Click"/>
+              <Button x:Name="ResetUsbBaselineButton" Content="Reset baseline to current devices" Click="ResetUsbBaseline_Click"/>
+              <Button Content="Refresh USB list" Click="RefreshUsb_Click"/>
+            </WrapPanel>
+            <TextBlock x:Name="UsbStatusText" Text="Development default: AuditOnly" Foreground="#94A3B8" Margin="0,8,0,0" TextWrapping="Wrap"/>
+          </StackPanel>
+        </Border>
+
+        <Border Grid.Row="2" Grid.Column="2" Padding="18" CornerRadius="12" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1">
+          <StackPanel>
+            <TextBlock Text="Browser controls" FontSize="18" FontWeight="SemiBold"/>
+            <TextBlock Text="Managed Chrome, Edge and Firefox extensions block downloads, file selection, showPicker, uploads, file drag/drop and file/image paste. Ordinary background binary traffic is not treated as an upload, preventing false repeated alerts. Manual typed-email blocking is postponed and disabled by policy." Foreground="#94A3B8" Margin="0,8,0,10" TextWrapping="Wrap"/>
+            <Button Content="Reload policy from JSON" Click="ReloadPolicy_Click" HorizontalAlignment="Left"/>
+            <TextBlock x:Name="BrowserStatusText" Foreground="#94A3B8" Margin="0,8,0,0" TextWrapping="Wrap"/>
+          </StackPanel>
+        </Border>
+      </Grid>
+
+      <Border Grid.Row="4" Margin="0,18,0,0" Padding="18" CornerRadius="12"
+              Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1">
+        <StackPanel>
+          <TextBlock Text="Manual file encryption and decryption" FontSize="19" FontWeight="SemiBold"/>
+          <TextBlock Text="Encrypt a selected file with chunked AES-256-GCM. After the encrypted file is authenticated and its plaintext hash is verified, the original plaintext file is deleted. Decryption recreates the original file and keeps the .dlpenc copy. While this Development app is running, the same actions are available from File Explorer right-click → Show more options." Foreground="#94A3B8" TextWrapping="Wrap" Margin="0,7,0,10"/>
+          <WrapPanel>
+            <Button x:Name="EncryptFileButton" Content="Encrypt and delete original" Click="EncryptFile_Click"/>
+            <Button x:Name="DecryptFileButton" Content="Decrypt .dlpenc file" Click="DecryptFile_Click"/>
+          </WrapPanel>
+          <TextBlock x:Name="CryptoStatusText" Text="Ready. Encrypted files use the .dlpenc extension." Foreground="#94A3B8" Margin="0,8,0,0" TextWrapping="Wrap"/>
+        </StackPanel>
+      </Border>
+
+      <Border Grid.Row="5" Margin="0,18,0,0" Padding="14" CornerRadius="10" Background="#3B1D1D" BorderBrush="#7F1D1D" BorderThickness="1">
+        <TextBlock Text="Important: ordinary Windows software cannot stop phone-camera photos, external HDMI capture or every administrator/kernel capture method. Browser upload blocking applies to managed Chrome, Edge and Firefox pages, including WhatsApp Web, Telegram Web, cloud drives and AI tools. Any browser without the managed extension must be blocked in Production using AppLocker or WDAC; an extension cannot protect a browser in which it is not installed. Separate desktop applications require a signed driver, network DLP, or application blocking. Production security also requires employees to be Standard Users." TextWrapping="Wrap" Foreground="#FECACA"/>
+      </Border>
+    </Grid>
+  </ScrollViewer>
+</Window>
