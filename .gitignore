@@ -8,6 +8,9 @@ artifacts/
 *.pem
 browser-extension/build/
 
+# Extension signing material (private key + derived artifacts) - never commit
+signing/
+
 # Backup files
 *.bak
 *.backup

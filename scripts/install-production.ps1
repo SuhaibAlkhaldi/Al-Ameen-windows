@@ -64,6 +64,12 @@ $desktopExe = Join-Path $installDir "Desktop\CompanyDlp.Desktop.exe"
     -NativeHostExe (Join-Path $installDir "NativeHost\CompanyDlp.NativeHost.exe") `
     -ExtensionIds @($ChromeExtensionId, $EdgeExtensionId)
 
+& (Join-Path $PSScriptRoot "register-browser-force-install.ps1") `
+    -ChromeExtensionId $ChromeExtensionId `
+    -ChromeExtensionUpdateUrl $ChromeExtensionUpdateUrl `
+    -EdgeExtensionId $EdgeExtensionId `
+    -EdgeExtensionUpdateUrl $EdgeExtensionUpdateUrl
+
 [Environment]::SetEnvironmentVariable("COMPANY_DLP_MODE", "Production", "Machine")
 [Environment]::SetEnvironmentVariable("COMPANY_DLP_POLICY_PATH", (Join-Path $dataDir "policy.json"), "Machine")
 [Environment]::SetEnvironmentVariable("COMPANY_DLP_SESSION_AGENT_EXE", $desktopExe, "Machine")
