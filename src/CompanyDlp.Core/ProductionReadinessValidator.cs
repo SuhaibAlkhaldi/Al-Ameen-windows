@@ -76,6 +76,7 @@ public static class ProductionReadinessValidator
         Require(screen.BlockWindowsGameBarShortcuts, "Windows Game Bar shortcut blocking must be enabled.", failures);
         Require(screen.DisableWindowsGameCapture, "Windows Game Capture policy must be disabled.", failures);
         Require(screen.MonitorKnownRecorderProcesses, "Known screen recorder process monitoring must be enabled.", failures);
+        Require(screen.MonitorKnownScreenshotToolProcesses, "Known screenshot tool process monitoring must be enabled.", failures);
         Require(screen.RecorderEnforcementMode.Equals("Block", StringComparison.OrdinalIgnoreCase)
                 || screen.RecorderEnforcementMode.Equals("WindowsAppControl", StringComparison.OrdinalIgnoreCase),
             "Screen recorder enforcement must be Block or WindowsAppControl.", failures);

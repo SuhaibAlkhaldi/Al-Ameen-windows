@@ -82,13 +82,22 @@ public sealed class ScreenPolicy
     public bool BlockWindowsGameBarShortcuts { get; set; } = true;
     public bool DisableWindowsGameCapture { get; set; } = true;
     public bool MonitorKnownRecorderProcesses { get; set; } = true;
+    public bool MonitorKnownScreenshotToolProcesses { get; set; } = true;
     public int RecorderPollMilliseconds { get; set; } = 250;
     public string RecorderEnforcementMode { get; set; } = "AuditOnly";
-    public List<string> BlockedProcessNames { get; set; } =
+
+    // Genuine screen-recording software — gated by the ScreenRecording permission.
+    public List<string> BlockedRecorderProcessNames { get; set; } =
     [
-        "obs64", "obs32", "ShareX", "SnippingTool", "ScreenClippingHost",
-        "GameBar",
+        "obs64", "obs32", "ShareX", "GameBar",
         "CamtasiaRecorder", "CamtasiaStudio", "Bandicam", "ScreenRecorder", "Loom"
+    ];
+
+    // Screenshot-only tools — these are the same capability the ScreenCapture permission is meant to
+    // grant, so they must be gated by ScreenCapture, not lumped in with recorders under ScreenRecording.
+    public List<string> BlockedScreenshotToolProcessNames { get; set; } =
+    [
+        "SnippingTool", "ScreenClippingHost"
     ];
 }
 

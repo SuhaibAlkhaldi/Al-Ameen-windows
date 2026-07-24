@@ -6,6 +6,7 @@ public static class ActionKeys
     public const string ScreenCapture = "screen.capture";
     public const string ScreenRecording = "screen.recording";
     public const string ClipboardCopySensitive = "clipboard.copy-sensitive";
+    public const string BrowserDownload = "browser.download";
     public const string BrowserUpload = "browser.upload";
     public const string BrowserDragDrop = "browser.drag-drop";
     public const string BrowserFilePaste = "browser.file-paste";

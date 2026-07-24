@@ -256,7 +256,7 @@ public sealed class PipeServer(
             case DlpMessageTypes.Audit:
             {
                 var audit = request.Data?.Deserialize<AuditEvent>(JsonDefaults.Options) ?? new AuditEvent();
-                await auditLogger.WriteAsync(audit, request.Context, cancellationToken);
+                var persisted = await auditLogger.WriteAsync(audit, request.Context, cancellationToken);
 
                 var policy = policyStore.Get();
                 if (policy.Notifications.Enabled && BrowserAuditNotificationPolicy.ShouldNotify(audit))
@@ -270,7 +270,12 @@ public sealed class PipeServer(
                         action: audit.Action);
                 }
 
-                return DlpResponse.Ok("Audit queued");
+                // Report the real outcome instead of an unconditional "Ok" — callers (e.g. the
+                // Desktop hotkey blocker) can only retry a genuinely failed write if they're told it
+                // failed.
+                return persisted
+                    ? DlpResponse.Ok("Audit queued")
+                    : DlpResponse.Fail("Audit event could not be persisted");
             }
             case DlpMessageTypes.ProtectFile:
             {

@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
 using CompanyDlp.Contracts;
@@ -32,8 +33,39 @@ public sealed class AuditOutbox(
         try
         {
             Directory.CreateDirectory(PendingDirectory);
-            await File.WriteAllBytesAsync(temporary, encrypted, cancellationToken);
-            File.Move(temporary, destination, false);
+
+            // Confirmed live (2026-07-24): audit events sent over the named pipe (e.g. from the
+            // Desktop hotkey blocker) failed here with "Either a required impersonation level was
+            // not provided, or the provided impersonation level is invalid." PipeServer's
+            // CaptureAuthenticatedClient impersonates the connecting client via pipe.RunAsClient(...)
+            // for *every* pipe request, and that thread-level impersonation token can still be
+            // ambient when this method's continuation later runs on a reused thread-pool thread —
+            // Windows then rejects the plain file write because the active token isn't valid for
+            // local resource access at that impersonation level. Audit events written directly by
+            // Service background workers (USB, software, etc.) never go through the pipe/RunAsClient
+            // at all, which is exactly why only pipe-relayed events were affected. Explicitly
+            // reverting to the service process's own identity before touching the filesystem
+            // guarantees this write is never affected by whatever impersonation state the thread
+            // happens to be carrying. RevertToSelf is safe to call even when nothing is currently
+            // impersonated on this thread.
+            const int maxAttempts = 3;
+            for (var attempt = 1; attempt <= maxAttempts; attempt++)
+            {
+                try
+                {
+                    RevertToSelf();
+                    await File.WriteAllBytesAsync(temporary, encrypted, cancellationToken);
+                    RevertToSelf();
+                    File.Move(temporary, destination, false);
+                    return;
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException && attempt < maxAttempts)
+                {
+                    logger.LogWarning(exception, "Audit outbox write/rename attempt {Attempt} failed for {FileName}; retrying.", attempt, fileName);
+                    TryDelete(temporary);
+                    await Task.Delay(150 * attempt, cancellationToken);
+                }
+            }
         }
         finally
         {
@@ -140,4 +172,10 @@ public sealed class AuditOutbox(
     {
         try { if (File.Exists(path)) File.Delete(path); } catch { }
     }
+
+    // Clears any Windows thread-level impersonation set by a prior pipe.RunAsClient(...) call (see
+    // the comment in EnqueueAsync). Safe/idempotent to call when nothing is impersonated.
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool RevertToSelf();
 }

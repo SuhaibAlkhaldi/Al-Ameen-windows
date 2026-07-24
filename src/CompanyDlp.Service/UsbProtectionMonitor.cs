@@ -42,7 +42,7 @@ public sealed class UsbProtectionMonitor(
                 && (!policy.Usb.DenyCompositeDevicesWithForbiddenFunctions || !bundle.HasForbiddenFunction);
             var userDecision = permissionEvaluator.Evaluate(
                 policy,
-                ActionKeys.UsbDeviceConnect,
+                ResolveGatingActionKey(bundle),
                 activeContext,
                 identity,
                 DateTimeOffset.UtcNow);
@@ -59,10 +59,12 @@ public sealed class UsbProtectionMonitor(
             var isNew = _known.Add(bundle.RootInstanceId);
             if (!isNew && !initial) continue;
 
+            var gatingActionKey = ResolveGatingActionKey(bundle);
+            var deviceTypeLabel = DescribeGatedDeviceType(gatingActionKey);
             var context = interactiveUserContextProvider.GetActiveConsoleUser();
             var decision = permissionEvaluator.Evaluate(
                 policy,
-                ActionKeys.UsbDeviceConnect,
+                gatingActionKey,
                 context,
                 identity,
                 DateTimeOffset.UtcNow);
@@ -87,7 +89,7 @@ public sealed class UsbProtectionMonitor(
             {
                 await auditLogger.WriteAsync(new AuditEvent
                 {
-                    ActionKey = ActionKeys.UsbDeviceConnect,
+                    ActionKey = gatingActionKey,
                     EventType = "UsbDeviceAllowed",
                     Action = initial ? "device-present-at-startup" : "device-arrival",
                     Method = ResolveAllowMethod(policy.Usb, bundle, decision),
@@ -103,7 +105,7 @@ public sealed class UsbProtectionMonitor(
 
             await auditLogger.WriteAsync(new AuditEvent
             {
-                ActionKey = ActionKeys.UsbDeviceConnect,
+                ActionKey = gatingActionKey,
                 EventType = "UsbDeviceBlocked",
                 Action = initial ? "device-present-at-startup" : "device-arrival",
                 Method = mode,
@@ -117,11 +119,11 @@ public sealed class UsbProtectionMonitor(
 
             if (!mode.Equals("Block", StringComparison.OrdinalIgnoreCase))
             {
-                logger.LogWarning("Unauthorized USB device detected in AuditOnly mode: {Device}", bundle.DisplayName);
+                logger.LogWarning("Unauthorized {DeviceType} detected in AuditOnly mode: {Device}", deviceTypeLabel, bundle.DisplayName);
                 notificationStore.Add(
                     "usb",
-                    "Unauthorized USB device detected",
-                    $"{bundle.DisplayName} is not an approved keyboard or mouse. AuditOnly mode recorded the device without disabling it.",
+                    $"Unauthorized {deviceTypeLabel} detected",
+                    $"{bundle.DisplayName} is not an approved {deviceTypeLabel.ToLowerInvariant()}. AuditOnly mode recorded the device without disabling it.",
                     "Warning",
                     "detected");
                 continue;
@@ -130,7 +132,7 @@ public sealed class UsbProtectionMonitor(
             var disabled = await controller.DisableAsync(bundle.RootInstanceId, cancellationToken);
             await auditLogger.WriteAsync(new AuditEvent
             {
-                ActionKey = ActionKeys.UsbDeviceConnect,
+                ActionKey = gatingActionKey,
                 EventType = disabled ? "UsbDeviceBlocked" : "UsbDeviceBlockFailed",
                 Action = "disable-device",
                 Method = "PnPUtil",
@@ -145,7 +147,7 @@ public sealed class UsbProtectionMonitor(
             {
                 notificationStore.Add(
                     "usb",
-                    "USB device could not be blocked",
+                    $"{deviceTypeLabel} could not be blocked",
                     $"Company DLP detected {bundle.DisplayName}, but Windows did not allow the device to be disabled. Contact IT.",
                     "Error",
                     "block-failed");
@@ -155,7 +157,7 @@ public sealed class UsbProtectionMonitor(
             {
                 notificationStore.Add(
                     "usb",
-                    "USB device blocked",
+                    $"{deviceTypeLabel} blocked",
                     $"{bundle.DisplayName} was blocked because it is not approved by company policy.",
                     "Error",
                     "blocked");
@@ -166,6 +168,25 @@ public sealed class UsbProtectionMonitor(
     }
 
     public void ResetBaseline() => baselineStore.Reset(inventory.GetPresentBundles());
+
+    // Windows PNPClass names (already collected per-bundle by UsbDeviceInventory) that distinguish the
+    // two specifically-grantable USB permissions from the general usb.device-connect gate: "DiskDrive" is
+    // the standard class for USB mass-storage devices (GUID_DEVCLASS_DISKDRIVE, {4d36e967-...}), "WPD" is
+    // Windows Portable Device — MTP/mobile/media devices (GUID_DEVCLASS_WPD, {eec5ad98-...}). Anything else
+    // (HID, keyboards/mice, other classes) falls back to the general permission.
+    private static string ResolveGatingActionKey(UsbDeviceBundleInfo bundle)
+    {
+        if (bundle.Classes.Any(value => value.Equals("DiskDrive", StringComparison.OrdinalIgnoreCase))) return ActionKeys.UsbStorage;
+        if (bundle.Classes.Any(value => value.Equals("WPD", StringComparison.OrdinalIgnoreCase))) return ActionKeys.UsbMobileDevice;
+        return ActionKeys.UsbDeviceConnect;
+    }
+
+    private static string DescribeGatedDeviceType(string gatingActionKey) => gatingActionKey switch
+    {
+        ActionKeys.UsbStorage => "USB storage device",
+        ActionKeys.UsbMobileDevice => "USB mobile device",
+        _ => "USB device"
+    };
 
     private static bool IsExplicitlyApproved(UsbPolicy policy, UsbDeviceBundleInfo bundle)
     {

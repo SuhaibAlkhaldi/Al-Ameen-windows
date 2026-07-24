@@ -94,7 +94,7 @@ public sealed class ScreenCaptureHotkeyBlocker : IDisposable
                             _ => "Windows Game Bar is disabled while screen-recording protection is active."
                         });
 
-                    _ = _pipeClient.SendAsync(DlpMessageTypes.Audit, new AuditEvent
+                    var auditEvent = new AuditEvent
                     {
                         ActionKey = isRecordingAttempt ? ActionKeys.ScreenRecording : ActionKeys.ScreenCapture,
                         EventType = isRecordingAttempt ? "ScreenRecordingBlocked" : "ScreenshotBlocked",
@@ -111,7 +111,17 @@ public sealed class ScreenCaptureHotkeyBlocker : IDisposable
                         SourceProcessName = Environment.ProcessPath is null ? "CompanyDlp.Desktop" : Path.GetFileName(Environment.ProcessPath),
                         SourceProcessPath = Environment.ProcessPath ?? "",
                         SourceProcessId = Environment.ProcessId
-                    });
+                    };
+
+                    // Dispatched via Task.Run rather than called directly: this method runs on the thread
+                    // that owns the WH_KEYBOARD_LL hook (the app's UI thread, invoked synchronously by
+                    // Windows), and starting the pipe I/O directly here ties its continuation to whatever
+                    // SynchronizationContext/message-pump state that hook invocation left behind — which is
+                    // exactly why this audit send was silently never reaching the outbox (confirmed live: a
+                    // real block happened, but zero .evt files were ever written). Task.Run moves the actual
+                    // send onto a thread-pool thread, and the response is now actually observed instead of a
+                    // bare fire-and-forget `_ = ...` that discarded even a hard failure.
+                    _ = SendAuditAsync(auditEvent);
                 }
                 return (IntPtr)1;
             }
@@ -119,6 +129,26 @@ public sealed class ScreenCaptureHotkeyBlocker : IDisposable
 
         return CallNextHookEx(_hook, code, wParam, lParam);
     }
+
+    private Task SendAuditAsync(AuditEvent auditEvent) => Task.Run(async () =>
+    {
+        for (var attempt = 1; attempt <= 2; attempt++)
+        {
+            try
+            {
+                var response = await _pipeClient.SendAsync(DlpMessageTypes.Audit, auditEvent);
+                if (response.Success) return;
+                if (attempt == 1) await Task.Delay(250);
+            }
+            catch
+            {
+                if (attempt == 1) await Task.Delay(250);
+            }
+        }
+        // Both attempts failed to reach the service pipe; surface it locally so it is at least
+        // discoverable instead of vanishing the way the original fire-and-forget call did.
+        _statusCallback($"Could not record the {auditEvent.ActionKey} block to the audit log.");
+    });
 
     private static bool IsPressed(int virtualKey) => (GetAsyncKeyState(virtualKey) & 0x8000) != 0;
 

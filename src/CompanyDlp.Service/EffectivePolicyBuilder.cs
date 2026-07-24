@@ -19,6 +19,7 @@ public sealed class EffectivePolicyBuilder(
             effective.Screen.BlockPrintScreenHotkey = false;
             effective.Screen.BlockWindowsSnippingShortcut = false;
             effective.Browser.DisableBrowserScreenshots = false;
+            effective.Screen.MonitorKnownScreenshotToolProcesses = false;
         }
 
         if (evaluator.Evaluate(source, ActionKeys.ScreenRecording, context, identity, nowUtc).IsAllowed)
@@ -33,6 +34,9 @@ public sealed class EffectivePolicyBuilder(
             effective.Clipboard.BlockSensitiveText = false;
             effective.Browser.BlockSensitiveCopy = false;
         }
+
+        if (evaluator.Evaluate(source, ActionKeys.BrowserDownload, context, identity, nowUtc).IsAllowed)
+            effective.Browser.BlockDownloads = false;
 
         if (evaluator.Evaluate(source, ActionKeys.BrowserUpload, context, identity, nowUtc).IsAllowed)
             effective.Browser.BlockFileUpload = false;

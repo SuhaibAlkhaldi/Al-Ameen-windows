@@ -11,10 +11,15 @@ public sealed class AuditLogger(
 {
     private readonly SemaphoreSlim _fileGate = new(1, 1);
 
-    public Task WriteAsync(AuditEvent auditEvent, CancellationToken cancellationToken = default) =>
+    public Task<bool> WriteAsync(AuditEvent auditEvent, CancellationToken cancellationToken = default) =>
         WriteAsync(auditEvent, null, cancellationToken);
 
-    public async Task WriteAsync(
+    // Returns whether the event was actually durably queued. Previously this swallowed every
+    // exception and callers (e.g. the pipe's "Audit" handler) always reported success regardless —
+    // a real block could fail to persist (confirmed live: AuditOutbox.EnqueueAsync losing a race with
+    // real-time antivirus scanning on the freshly-written file) while the caller was told it worked.
+    // Callers that only care about best-effort logging can still just `await` and ignore the result.
+    public async Task<bool> WriteAsync(
         AuditEvent auditEvent,
         ClientContext? context,
         CancellationToken cancellationToken = default)
@@ -26,10 +31,13 @@ public sealed class AuditLogger(
 
             if (policyStore.Get().Runtime.Mode.Equals("Development", StringComparison.OrdinalIgnoreCase))
                 await WriteReadableDevelopmentLogAsync(securityEvent, cancellationToken);
+
+            return true;
         }
         catch (Exception exception)
         {
             logger.LogError(exception, "Failed to persist a Company DLP security event.");
+            return false;
         }
     }
 

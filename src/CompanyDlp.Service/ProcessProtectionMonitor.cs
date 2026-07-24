@@ -27,11 +27,29 @@ public sealed class ProcessProtectionMonitor(
             return;
         }
 
-        if (!policy.Enabled || !policy.Screen.Enabled || !policy.Screen.MonitorKnownRecorderProcesses) return;
+        if (!policy.Enabled || !policy.Screen.Enabled) return;
+        if (!policy.Screen.MonitorKnownRecorderProcesses && !policy.Screen.MonitorKnownScreenshotToolProcesses) return;
 
-        var targets = policy.Screen.BlockedProcessNames
-            .Select(name => Path.GetFileNameWithoutExtension(name).Trim())
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var watchLists = new[]
+        {
+            new ProcessWatch(
+                Enabled: policy.Screen.MonitorKnownRecorderProcesses,
+                Names: policy.Screen.BlockedRecorderProcessNames,
+                ActionKey: ActionKeys.ScreenRecording,
+                CapabilityLabel: "screen recording",
+                NounSingular: "Screen recording application"),
+            new ProcessWatch(
+                Enabled: policy.Screen.MonitorKnownScreenshotToolProcesses,
+                Names: policy.Screen.BlockedScreenshotToolProcessNames,
+                ActionKey: ActionKeys.ScreenCapture,
+                CapabilityLabel: "screenshot capture",
+                NounSingular: "Screenshot tool")
+        };
+
+        var targets = watchLists
+            .Where(w => w.Enabled)
+            .SelectMany(w => w.Names.Select(name => (Name: Path.GetFileNameWithoutExtension(name).Trim(), Watch: w)))
+            .ToDictionary(x => x.Name, x => x.Watch, StringComparer.OrdinalIgnoreCase);
         var activeTargetIds = new HashSet<int>();
 
         foreach (var process in Process.GetProcesses())
@@ -41,7 +59,7 @@ public sealed class ProcessProtectionMonitor(
                 string name;
                 try { name = Path.GetFileNameWithoutExtension(process.ProcessName).Trim(); }
                 catch { continue; }
-                if (!targets.Contains(name)) continue;
+                if (!targets.TryGetValue(name, out var watch)) continue;
                 activeTargetIds.Add(process.Id);
                 if (!_reported.Add(process.Id)) continue;
 
@@ -57,7 +75,7 @@ public sealed class ProcessProtectionMonitor(
                 };
                 var decision = permissionEvaluator.Evaluate(
                     policy,
-                    ActionKeys.ScreenRecording,
+                    watch.ActionKey,
                     context,
                     identityProvider.Get(),
                     DateTimeOffset.UtcNow);
@@ -72,19 +90,19 @@ public sealed class ProcessProtectionMonitor(
                     }
                     catch (Exception exception)
                     {
-                        logger.LogWarning(exception, "Could not terminate recorder process {ProcessName}", name);
+                        logger.LogWarning(exception, "Could not terminate process {ProcessName}", name);
                         result = "termination-failed";
                     }
                 }
 
                 await auditLogger.WriteAsync(new AuditEvent
                 {
-                    ActionKey = ActionKeys.ScreenRecording,
-                    EventType = decision.IsAllowed ? "ScreenRecordingAllowed" : result == "terminated" ? "ScreenRecordingBlocked" : "ScreenRecordingApplicationDetected",
+                    ActionKey = watch.ActionKey,
+                    EventType = decision.IsAllowed ? "ScreenProcessAllowed" : result == "terminated" ? "ScreenProcessBlocked" : "ScreenProcessDetected",
                     Action = "process-detected",
-                    Method = "KnownRecorderProcess",
+                    Method = watch.ActionKey == ActionKeys.ScreenRecording ? "KnownRecorderProcess" : "KnownScreenshotToolProcess",
                     Result = result,
-                    ReasonCode = decision.IsAllowed ? decision.ReasonCode : result == "terminated" ? "RecorderProcessDeniedByPolicy" : result == "termination-failed" ? "RecorderTerminationFailed" : "RecorderAuditOnly",
+                    ReasonCode = decision.IsAllowed ? decision.ReasonCode : result == "terminated" ? "ProcessDeniedByPolicy" : result == "termination-failed" ? "ProcessTerminationFailed" : "ProcessAuditOnly",
                     PermissionGrantId = decision.PermissionGrantId,
                     SourceProcessName = metadata.Name,
                     SourceProcessPath = metadata.Path,
@@ -97,18 +115,18 @@ public sealed class ProcessProtectionMonitor(
 
                 var title = result switch
                 {
-                    "terminated" => "Screen recording application blocked",
-                    "termination-failed" => "Screen recording application could not be stopped",
-                    _ => "Screen recording application detected"
+                    "terminated" => $"{watch.NounSingular} blocked",
+                    "termination-failed" => $"{watch.NounSingular} could not be stopped",
+                    _ => $"{watch.NounSingular} detected"
                 };
                 var message = result switch
                 {
-                    "terminated" => $"{name} was closed because screen recording is prohibited by company policy.",
+                    "terminated" => $"{name} was closed because {watch.CapabilityLabel} is prohibited by company policy.",
                     "termination-failed" => $"{name} was detected, but Company DLP could not close it. Contact IT.",
-                    _ => $"{name} was detected while screen recording protection is enabled."
+                    _ => $"{name} was detected while {watch.CapabilityLabel} protection is enabled."
                 };
                 notificationStore.Add(
-                    "screen-recorder",
+                    watch.ActionKey == ActionKeys.ScreenRecording ? "screen-recorder" : "screenshot-tool",
                     title,
                     message,
                     result == "termination-failed" ? "Error" : "Warning",
@@ -165,4 +183,11 @@ public sealed class ProcessProtectionMonitor(
     }
 
     private sealed record ProcessMetadata(string Name, string Path, string UserSid, string Username);
+
+    private sealed record ProcessWatch(
+        bool Enabled,
+        List<string> Names,
+        string ActionKey,
+        string CapabilityLabel,
+        string NounSingular);
 }

@@ -13,6 +13,7 @@ public sealed class ScreenRecordingProcessBlocker : IDisposable
     private readonly Action<string, string> _alertCallback;
     private readonly object _sync = new();
     private readonly HashSet<int> _handledProcessIds = [];
+    private readonly List<ProcessWatch> _watchLists;
     private System.Threading.Timer? _timer;
     private int _scanInProgress;
     private bool _disposed;
@@ -27,11 +28,27 @@ public sealed class ScreenRecordingProcessBlocker : IDisposable
         _pipeClient = pipeClient;
         _statusCallback = statusCallback;
         _alertCallback = alertCallback;
+        _watchLists =
+        [
+            new ProcessWatch(
+                Enabled: () => _policy.MonitorKnownRecorderProcesses,
+                Names: _policy.BlockedRecorderProcessNames,
+                ActionKey: ActionKeys.ScreenRecording,
+                CapabilityLabel: "screen recording",
+                NounSingular: "Screen recording application"),
+            new ProcessWatch(
+                Enabled: () => _policy.MonitorKnownScreenshotToolProcesses,
+                Names: _policy.BlockedScreenshotToolProcessNames,
+                ActionKey: ActionKeys.ScreenCapture,
+                CapabilityLabel: "screenshot capture",
+                NounSingular: "Screenshot tool")
+        ];
     }
 
     public void Start()
     {
-        if (_disposed || !_policy.MonitorKnownRecorderProcesses || _timer is not null) return;
+        if (_disposed || _timer is not null) return;
+        if (!_policy.MonitorKnownRecorderProcesses && !_policy.MonitorKnownScreenshotToolProcesses) return;
 
         var interval = Math.Clamp(_policy.RecorderPollMilliseconds, 100, 2000);
         _timer = new System.Threading.Timer(
@@ -47,11 +64,6 @@ public sealed class ScreenRecordingProcessBlocker : IDisposable
 
         try
         {
-            var targets = _policy.BlockedProcessNames
-                .Select(NormalizeProcessName)
-                .Where(name => !string.IsNullOrWhiteSpace(name))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
             var activeTargetIds = new HashSet<int>();
 
             foreach (var process in Process.GetProcesses())
@@ -68,7 +80,11 @@ public sealed class ScreenRecordingProcessBlocker : IDisposable
                         continue;
                     }
 
-                    if (!targets.Contains(name) || process.Id == Environment.ProcessId) continue;
+                    if (process.Id == Environment.ProcessId) continue;
+
+                    var watch = _watchLists.FirstOrDefault(w => w.Enabled() && w.Names.Contains(name, StringComparer.OrdinalIgnoreCase));
+                    if (watch is null) continue;
+
                     activeTargetIds.Add(process.Id);
 
                     lock (_sync)
@@ -92,20 +108,23 @@ public sealed class ScreenRecordingProcessBlocker : IDisposable
 
                     var status = result switch
                     {
-                        "terminated" => $"Screen recorder blocked: {name}",
-                        "termination-failed" => $"Could not stop screen recorder: {name}",
-                        _ => $"Screen recorder detected: {name}"
+                        "terminated" => $"{watch.NounSingular} blocked: {name}",
+                        "termination-failed" => $"Could not stop {watch.NounSingular.ToLowerInvariant()}: {name}",
+                        _ => $"{watch.NounSingular} detected: {name}"
                     };
                     _statusCallback(status);
 
-                    var title = result == "termination-failed"
-                        ? "Screen recording application could not be stopped"
-                        : "Screen recording application blocked";
+                    var title = result switch
+                    {
+                        "terminated" => $"{watch.NounSingular} blocked",
+                        "termination-failed" => $"{watch.NounSingular} could not be stopped",
+                        _ => $"{watch.NounSingular} detected"
+                    };
                     var message = result switch
                     {
-                        "terminated" => $"{name} was closed because screen recording is prohibited by company policy.",
+                        "terminated" => $"{name} was closed because {watch.CapabilityLabel} is prohibited by company policy.",
                         "termination-failed" => $"{name} was detected, but Company DLP could not close it. Contact IT.",
-                        _ => $"{name} was detected while screen recording protection is enabled."
+                        _ => $"{name} was detected while {watch.CapabilityLabel} protection is enabled."
                     };
                     _alertCallback(title, message);
 
@@ -113,12 +132,12 @@ public sealed class ScreenRecordingProcessBlocker : IDisposable
                     try { processPath = process.MainModule?.FileName ?? ""; } catch { processPath = ""; }
                     await _pipeClient.SendAsync(DlpMessageTypes.Audit, new AuditEvent
                     {
-                        ActionKey = ActionKeys.ScreenRecording,
-                        EventType = result == "terminated" ? "ScreenRecordingBlocked" : "ScreenRecordingApplicationDetected",
+                        ActionKey = watch.ActionKey,
+                        EventType = result == "terminated" ? "ScreenProcessBlocked" : "ScreenProcessDetected",
                         Action = "process-detected",
-                        Method = "KnownRecorderProcess",
+                        Method = watch.ActionKey == ActionKeys.ScreenRecording ? "KnownRecorderProcess" : "KnownScreenshotToolProcess",
                         Result = result,
-                        ReasonCode = result == "terminated" ? "RecorderProcessDeniedByPolicy" : result == "termination-failed" ? "RecorderTerminationFailed" : "RecorderAuditOnly",
+                        ReasonCode = result == "terminated" ? "ProcessDeniedByPolicy" : result == "termination-failed" ? "ProcessTerminationFailed" : "ProcessAuditOnly",
                         SourceProcessName = name,
                         SourceProcessPath = processPath,
                         SourceProcessId = process.Id,
@@ -148,4 +167,11 @@ public sealed class ScreenRecordingProcessBlocker : IDisposable
         _timer = null;
         lock (_sync) _handledProcessIds.Clear();
     }
+
+    private sealed record ProcessWatch(
+        Func<bool> Enabled,
+        List<string> Names,
+        string ActionKey,
+        string CapabilityLabel,
+        string NounSingular);
 }

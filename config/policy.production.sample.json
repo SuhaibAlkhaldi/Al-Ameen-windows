@@ -53,19 +53,22 @@
     "blockPrintScreenHotkey": true,
     "blockWindowsSnippingShortcut": true,
     "monitorKnownRecorderProcesses": true,
+    "monitorKnownScreenshotToolProcesses": true,
     "recorderEnforcementMode": "Block",
-    "blockedProcessNames": [
+    "blockedRecorderProcessNames": [
       "obs64",
       "obs32",
       "ShareX",
-      "SnippingTool",
-      "ScreenClippingHost",
       "GameBar",
       "CamtasiaRecorder",
       "CamtasiaStudio",
       "Bandicam",
       "ScreenRecorder",
       "Loom"
+    ],
+    "blockedScreenshotToolProcessNames": [
+      "SnippingTool",
+      "ScreenClippingHost"
     ],
     "blockWindowsGameBarShortcuts": true,
     "disableWindowsGameCapture": true,

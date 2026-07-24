@@ -3,7 +3,13 @@ using Microsoft.Win32;
 
 namespace CompanyDlp.Service;
 
-public sealed class BrowserPolicyManager(PolicyStore policyStore, AuditLogger auditLogger, ILogger<BrowserPolicyManager> logger)
+public sealed class BrowserPolicyManager(
+    PolicyStore policyStore,
+    PermissionEvaluator permissionEvaluator,
+    AgentIdentityProvider identityProvider,
+    InteractiveUserContextProvider interactiveUserContextProvider,
+    AuditLogger auditLogger,
+    ILogger<BrowserPolicyManager> logger)
 {
     private const string EdgePath = @"SOFTWARE\Policies\Microsoft\Edge";
     private const string ChromePath = @"SOFTWARE\Policies\Google\Chrome";
@@ -22,8 +28,14 @@ public sealed class BrowserPolicyManager(PolicyStore policyStore, AuditLogger au
         {
             if (policy.Browser.Enabled)
             {
-                ApplyEdge(policy.Browser);
-                ApplyChrome(policy.Browser);
+                // policyStore.Get() is the raw/base policy shared machine-wide — it carries no per-employee
+                // grant data (the backend never sends a Browser section at all). browser.download is a
+                // per-subject grantable permission, so resolve it against the active console user's grants
+                // (same DeviceId-scoped matching UsbProtectionMonitor already uses) instead of blindly
+                // applying the static default.
+                var blockDownloads = ResolveBlockDownloads(policy);
+                ApplyEdge(policy.Browser, blockDownloads);
+                ApplyChrome(policy.Browser, blockDownloads);
             }
             ApplyWindowsScreenCapturePolicy(policy.Screen);
             await auditLogger.WriteAsync(new AuditEvent
@@ -49,6 +61,21 @@ public sealed class BrowserPolicyManager(PolicyStore policyStore, AuditLogger au
     }
 
 
+    private bool ResolveBlockDownloads(DlpPolicy policy)
+    {
+        if (!policy.Browser.BlockDownloads) return false;
+
+        var context = interactiveUserContextProvider.GetActiveConsoleUser();
+        var decision = permissionEvaluator.Evaluate(
+            policy,
+            ActionKeys.BrowserDownload,
+            context,
+            identityProvider.Get(),
+            DateTimeOffset.UtcNow);
+
+        return !decision.IsAllowed;
+    }
+
     private static void ApplyWindowsScreenCapturePolicy(ScreenPolicy policy)
     {
         const string gameDvrPath = @"SOFTWARE\Policies\Microsoft\Windows\GameDVR";
@@ -58,7 +85,7 @@ public sealed class BrowserPolicyManager(PolicyStore policyStore, AuditLogger au
         SetOrDeleteDword(key, "AllowGameDVR", policy.Enabled && policy.DisableWindowsGameCapture, 0);
     }
 
-    private static void ApplyEdge(BrowserPolicy policy)
+    private static void ApplyEdge(BrowserPolicy policy, bool blockDownloads)
     {
         using var key = Registry.LocalMachine.CreateSubKey(EdgePath, true)
             ?? throw new InvalidOperationException("Could not open the Edge policy registry key.");
@@ -67,19 +94,19 @@ public sealed class BrowserPolicyManager(PolicyStore policyStore, AuditLogger au
         SetOrDeleteDword(key, "BrowserGuestModeEnabled", policy.DisableGuestMode, 0);
         SetOrDeleteDword(key, "DisableScreenshots", policy.DisableBrowserScreenshots, 1);
         SetOrDeleteDword(key, "WebCaptureEnabled", policy.DisableBrowserScreenshots, 0);
-        SetOrDeleteDword(key, "DownloadRestrictions", policy.BlockDownloads, 3);
+        SetOrDeleteDword(key, "DownloadRestrictions", blockDownloads, 3);
 
         ApplyExtensionPolicy(Registry.LocalMachine, EdgePath, policy.EdgeExtensionId, policy.EdgeExtensionUpdateUrl, policy.BlockUnapprovedExtensions);
     }
 
-    private static void ApplyChrome(BrowserPolicy policy)
+    private static void ApplyChrome(BrowserPolicy policy, bool blockDownloads)
     {
         using var key = Registry.LocalMachine.CreateSubKey(ChromePath, true)
             ?? throw new InvalidOperationException("Could not open the Chrome policy registry key.");
 
         SetOrDeleteDword(key, "IncognitoModeAvailability", policy.DisableIncognito, 1);
         SetOrDeleteDword(key, "BrowserGuestModeEnabled", policy.DisableGuestMode, 0);
-        SetOrDeleteDword(key, "DownloadRestrictions", policy.BlockDownloads, 3);
+        SetOrDeleteDword(key, "DownloadRestrictions", blockDownloads, 3);
 
         ApplyExtensionPolicy(Registry.LocalMachine, ChromePath, policy.ChromeExtensionId, policy.ChromeExtensionUpdateUrl, policy.BlockUnapprovedExtensions);
     }
