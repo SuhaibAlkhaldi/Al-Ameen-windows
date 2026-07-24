@@ -7,14 +7,18 @@ param(
 )
 $ErrorActionPreference = "Stop"
 
-# Real, meaningful value name (not the placeholder "9999" uninstall-production.ps1 used to expect,
-# which nothing here ever created). uninstall-production.ps1 removes this same name.
-$valueName = "CompanyDlpBrowserExtension"
+# Chrome/Edge read Windows list-type policies (ExtensionInstallForcelist/Blocklist) by enumerating
+# the *values* under this registry key as an ordered list — the value name must be a plain sequential
+# index ("1", "2", ...), not an arbitrary/descriptive string. Confirmed live: with a non-numeric name
+# the key/value round-trips fine through the registry but Chrome silently never issues the extension
+# update fetch at all (no request, no error, nothing) - the force-install just never happens.
+# uninstall-production.ps1 removes this same name.
+$valueName = "1"
 
 function Set-ForceInstall {
     param([string]$PolicyRoot, [string]$ExtensionId, [string]$UpdateUrl)
     if ($ExtensionId -like "REPLACE*" -or $UpdateUrl -like "REPLACE*") {
-        throw "$PolicyRoot: extension id/update URL still looks like an unfilled placeholder ('$ExtensionId' / '$UpdateUrl')."
+        throw "${PolicyRoot}: extension id/update URL still looks like an unfilled placeholder ('$ExtensionId' / '$UpdateUrl')."
     }
 
     $forcelistPath = "$PolicyRoot\ExtensionInstallForcelist"

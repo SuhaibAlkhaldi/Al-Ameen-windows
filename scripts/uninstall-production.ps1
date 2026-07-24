@@ -10,8 +10,9 @@ Remove-Item "HKLM:\SOFTWARE\Google\Chrome\NativeMessagingHosts\com.company.dlp" 
 Remove-Item "HKLM:\SOFTWARE\Microsoft\Edge\NativeMessagingHosts\com.company.dlp" -Recurse -Force -ErrorAction SilentlyContinue
 
 
-# Value name must match what register-browser-force-install.ps1 actually creates.
-$browserExtensionValueName = "CompanyDlpBrowserExtension"
+# Value name must match what register-browser-force-install.ps1 actually creates (a numeric list
+# index - Chrome/Edge require this to recognize the registry value as a list entry at all).
+$browserExtensionValueName = "1"
 foreach ($item in @(
     @{ Path = "HKLM:\SOFTWARE\Policies\Google\Chrome\ExtensionInstallForcelist"; Name = $browserExtensionValueName },
     @{ Path = "HKLM:\SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallForcelist"; Name = $browserExtensionValueName },
