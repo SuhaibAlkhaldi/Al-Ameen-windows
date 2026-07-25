@@ -125,10 +125,13 @@ app.MapPost("/api/v1/agent/heartbeat", async (AgentHeartbeatRequest request, Can
         writeGate,
         cancellationToken);
 
+    var policyVersion = File.Exists(policyPath)
+        ? Math.Max(1, new DateTimeOffset(File.GetLastWriteTimeUtc(policyPath)).ToUnixTimeMilliseconds())
+        : 0;
     return Results.Ok(new AgentHeartbeatResponse
     {
         ServerTimeUtc = DateTimeOffset.UtcNow,
-        PolicyRefreshRequired = false
+        PolicyRefreshRequired = request.LastAppliedPolicyVersion < policyVersion
     });
 });
 

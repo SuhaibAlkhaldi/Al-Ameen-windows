@@ -25,8 +25,19 @@ function Write-LauncherStep {
 }
 
 try {
-    Start-Transcript -Path (Join-Path $logRoot "launcher.transcript.log") -Force | Out-Null
-    $transcriptStarted = $true
+    # Transcript logging is optional and must never prevent Development startup.
+    # A unique file name avoids collisions with a stale or locked transcript.
+    try {
+        $transcriptPath = Join-Path $logRoot ("launcher.transcript.{0:yyyyMMdd-HHmmss-fff}.log" -f (Get-Date))
+        Start-Transcript -Path $transcriptPath -Force -ErrorAction Stop | Out-Null
+        $transcriptStarted = $true
+    }
+    catch {
+        $transcriptStarted = $false
+        $warning = "[{0:yyyy-MM-dd HH:mm:ss.fff}] Transcript logging was skipped: {1}" -f (Get-Date), $_.Exception.Message
+        Write-Warning $warning
+        Add-Content -LiteralPath $launcherLog -Value $warning -Encoding UTF8
+    }
 
     Write-LauncherStep "Restoring any previous Development session."
     & (Join-Path $PSScriptRoot "restore-development.ps1")
@@ -47,10 +58,18 @@ try {
         $policy = Join-Path $root "config\policy.development.json"
         $dotnetExe = (Get-Command dotnet -ErrorAction Stop).Source
 
-        foreach ($requiredFile in @($desktopExe, $serviceDll, $mockServerDll, $policy, $dotnetExe)) {
+        foreach ($requiredFile in @($desktopExe, $serviceDll, $policy, $dotnetExe)) {
             if (-not (Test-Path -LiteralPath $requiredFile)) {
                 throw "Required development file was not found: $requiredFile"
             }
+        }
+
+        $policyDocument = Get-Content -LiteralPath $policy -Raw | ConvertFrom-Json
+        $backendUrl = [string]$policyDocument.backend.baseUrl
+        $authenticationMode = [string]$policyDocument.backend.authenticationMode
+        $useMockServer = $authenticationMode -eq "DevelopmentNone" -and $backendUrl.TrimEnd('/') -eq "http://127.0.0.1:5055"
+        if ($useMockServer -and -not (Test-Path -LiteralPath $mockServerDll)) {
+            throw "Required Development Mock Server file was not found: $mockServerDll"
         }
         Write-LauncherStep "All required runtime files were found."
 
@@ -67,38 +86,53 @@ try {
         $serviceErr = Join-Path $logRoot "service.stderr.log"
         Remove-Item $mockOut, $mockErr, $serviceOut, $serviceErr -Force -ErrorAction SilentlyContinue
 
-        Write-LauncherStep "Starting Development Mock Server through signed dotnet.exe."
-        $mockServer = Start-Process -FilePath $dotnetExe `
-            -ArgumentList ('"{0}"' -f $mockServerDll) `
-            -WorkingDirectory $root `
-            -RedirectStandardOutput $mockOut `
-            -RedirectStandardError $mockErr `
-            -PassThru
+        if ($useMockServer) {
+            Write-LauncherStep "Starting Development Mock Server through signed dotnet.exe."
+            $mockServer = Start-Process -FilePath $dotnetExe `
+                -ArgumentList ('"{0}"' -f $mockServerDll) `
+                -WorkingDirectory $root `
+                -RedirectStandardOutput $mockOut `
+                -RedirectStandardError $mockErr `
+                -PassThru
 
-        $mockReady = $false
-        for ($attempt = 1; $attempt -le 40; $attempt++) {
-            if ($mockServer.HasExited) {
-                $errorText = if (Test-Path $mockErr) { Get-Content $mockErr -Raw -ErrorAction SilentlyContinue } else { "" }
-                $outputText = if (Test-Path $mockOut) { Get-Content $mockOut -Raw -ErrorAction SilentlyContinue } else { "" }
-                throw "Development Mock Server exited with code $($mockServer.ExitCode).`nSTDERR:`n$errorText`nSTDOUT:`n$outputText"
+            $mockReady = $false
+            for ($attempt = 1; $attempt -le 40; $attempt++) {
+                if ($mockServer.HasExited) {
+                    $errorText = if (Test-Path $mockErr) { Get-Content $mockErr -Raw -ErrorAction SilentlyContinue } else { "" }
+                    $outputText = if (Test-Path $mockOut) { Get-Content $mockOut -Raw -ErrorAction SilentlyContinue } else { "" }
+                    throw "Development Mock Server exited with code $($mockServer.ExitCode).`nSTDERR:`n$errorText`nSTDOUT:`n$outputText"
+                }
+
+                try {
+                    $health = Invoke-RestMethod -Uri "http://127.0.0.1:5055/health" -TimeoutSec 1
+                    if ($health.status -eq "Healthy") {
+                        $mockReady = $true
+                        break
+                    }
+                }
+                catch {
+                    Start-Sleep -Milliseconds 250
+                }
             }
 
+            if (-not $mockReady) {
+                throw "Development Mock Server did not become ready. Review $mockOut and $mockErr."
+            }
+            Write-LauncherStep "Development Mock Server is healthy at http://127.0.0.1:5055 (PID $($mockServer.Id))."
+        }
+        else {
+            Write-LauncherStep "Using central Admin API configured at $backendUrl; the local Mock Server will not be started."
             try {
-                $health = Invoke-RestMethod -Uri "http://127.0.0.1:5055/health" -TimeoutSec 1
-                if ($health.status -eq "Healthy") {
-                    $mockReady = $true
-                    break
+                $health = Invoke-RestMethod -Uri "$($backendUrl.TrimEnd('/'))/health/ready" -TimeoutSec 5
+                if ($health.status -ne "Healthy") {
+                    throw "Central Admin API health status is '$($health.status)'."
                 }
             }
             catch {
-                Start-Sleep -Milliseconds 250
+                throw "Central Admin API is not ready at $($backendUrl.TrimEnd('/'))/health/ready. Start START_ADMIN_API.bat first. $($_.Exception.Message)"
             }
+            Write-LauncherStep "Central Admin API is healthy."
         }
-
-        if (-not $mockReady) {
-            throw "Development Mock Server did not become ready. Review $mockOut and $mockErr."
-        }
-        Write-LauncherStep "Development Mock Server is healthy at http://127.0.0.1:5055 (PID $($mockServer.Id))."
 
         Write-LauncherStep "Starting Company DLP Service through signed dotnet.exe."
         $service = Start-Process -FilePath $dotnetExe `

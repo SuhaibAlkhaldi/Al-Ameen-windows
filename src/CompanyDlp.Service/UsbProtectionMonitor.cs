@@ -59,9 +59,9 @@ public sealed class UsbProtectionMonitor(
             var isNew = _known.Add(bundle.RootInstanceId);
             if (!isNew && !initial) continue;
 
+            var context = interactiveUserContextProvider.GetActiveConsoleUser();
             var gatingActionKey = ResolveGatingActionKey(bundle);
             var deviceTypeLabel = DescribeGatedDeviceType(gatingActionKey);
-            var context = interactiveUserContextProvider.GetActiveConsoleUser();
             var decision = permissionEvaluator.Evaluate(
                 policy,
                 gatingActionKey,

@@ -1,0 +1,46 @@
+{
+  "policyVersion": "3.1-central-development-bootstrap",
+  "enabled": true,
+  "runtime": {
+    "mode": "Development",
+    "persistentProtection": false,
+    "policyReapplySeconds": 15,
+    "auditDirectory": "%LOCALAPPDATA%\\CompanyDlp\\Audit",
+    "keepSessionAgentRunning": false,
+    "sessionAgentPollSeconds": 5
+  },
+  "backend": {
+    "enabled": true,
+    "tenantId": "PUT-TENANT-ID-HERE",
+    "mode": "Development",
+    "baseUrl": "http://127.0.0.1:5060",
+    "requestTimeoutSeconds": 15,
+    "auditBatchSize": 100,
+    "auditSyncSeconds": 3,
+    "policySyncSeconds": 30,
+    "heartbeatSeconds": 15,
+    "allowUnsignedDevelopmentPolicy": true,
+    "policySigningPublicKeyPem": "",
+    "authenticationMode": "DeviceBearerToken",
+    "credentialName": "agent-access-token"
+  },
+  "permissions": {
+    "defaultPermissions": {
+      "screen.capture": false,
+      "screen.recording": false,
+      "clipboard.copy-sensitive": false,
+      "browser.upload": false,
+      "browser.drag-drop": false,
+      "browser.file-paste": false,
+      "browser.image-paste": false,
+      "usb.device-connect": false,
+      "usb.storage": false,
+      "usb.mobile-device": false,
+      "software.install": false,
+      "software.execute-unapproved": false,
+      "file.encrypt": true,
+      "file.decrypt": true
+    },
+    "grants": []
+  }
+}

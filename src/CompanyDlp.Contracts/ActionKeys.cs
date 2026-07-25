@@ -3,10 +3,10 @@ namespace CompanyDlp.Contracts;
 public static class ActionKeys
 {
     public const string AgentSession = "agent.session";
+    public const string BrowserDownload = "browser.download";
     public const string ScreenCapture = "screen.capture";
     public const string ScreenRecording = "screen.recording";
     public const string ClipboardCopySensitive = "clipboard.copy-sensitive";
-    public const string BrowserDownload = "browser.download";
     public const string BrowserUpload = "browser.upload";
     public const string BrowserDragDrop = "browser.drag-drop";
     public const string BrowserFilePaste = "browser.file-paste";
@@ -18,4 +18,23 @@ public static class ActionKeys
     public const string SoftwareExecuteUnapproved = "software.execute-unapproved";
     public const string FileEncrypt = "file.encrypt";
     public const string FileDecrypt = "file.decrypt";
+
+    public static IReadOnlySet<string> All { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        AgentSession,
+        ScreenCapture,
+        ScreenRecording,
+        ClipboardCopySensitive,
+        BrowserUpload,
+        BrowserDragDrop,
+        BrowserFilePaste,
+        BrowserImagePaste,
+        UsbDeviceConnect,
+        UsbStorage,
+        UsbMobileDevice,
+        SoftwareInstall,
+        SoftwareExecuteUnapproved,
+        FileEncrypt,
+        FileDecrypt
+    };
 }

@@ -18,6 +18,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CompanyDlp.BrowserBridge", 
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CompanyDlp.Core", "src\CompanyDlp.Core\CompanyDlp.Core.csproj", "{B901D6A1-2BB4-4B01-BB83-1A2D0D2E01A8}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CompanyDlp.AdminApi", "src\CompanyDlp.AdminApi\CompanyDlp.AdminApi.csproj", "{B901D6A1-2BB4-4B01-BB83-1A2D0D2E01A9}"
+EndProject
 Global
   GlobalSection(SolutionConfigurationPlatforms) = preSolution
     Debug|Any CPU = Debug|Any CPU
@@ -56,5 +58,9 @@ Global
     {B901D6A1-2BB4-4B01-BB83-1A2D0D2E01A8}.Debug|Any CPU.Build.0 = Debug|Any CPU
     {B901D6A1-2BB4-4B01-BB83-1A2D0D2E01A8}.Release|Any CPU.ActiveCfg = Release|Any CPU
     {B901D6A1-2BB4-4B01-BB83-1A2D0D2E01A8}.Release|Any CPU.Build.0 = Release|Any CPU
+    {B901D6A1-2BB4-4B01-BB83-1A2D0D2E01A9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+    {B901D6A1-2BB4-4B01-BB83-1A2D0D2E01A9}.Debug|Any CPU.Build.0 = Debug|Any CPU
+    {B901D6A1-2BB4-4B01-BB83-1A2D0D2E01A9}.Release|Any CPU.ActiveCfg = Release|Any CPU
+    {B901D6A1-2BB4-4B01-BB83-1A2D0D2E01A9}.Release|Any CPU.Build.0 = Release|Any CPU
   EndGlobalSection
 EndGlobal

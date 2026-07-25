@@ -1,4 +1,4 @@
-using System.Security.Cryptography;
+﻿using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using CompanyDlp.Contracts;
@@ -115,8 +115,15 @@ public sealed class SecurityEventFactory(
         if (eventType.Contains("sensitive") || eventType.Contains("clipboard")) return ActionKeys.ClipboardCopySensitive;
         if (eventType.Contains("usb")) return ActionKeys.UsbDeviceConnect;
         if (eventType.Contains("software") || eventType.Contains("install")) return ActionKeys.SoftwareInstall;
-        if (eventType.Contains("file-crypto") && action.Contains("decrypt")) return ActionKeys.FileDecrypt;
-        if (eventType.Contains("file-crypto")) return ActionKeys.FileEncrypt;
+        if (action.Contains("decrypt") || eventType.Contains("decryption"))
+        {
+            return ActionKeys.FileDecrypt;
+        }
+
+        if (action.Contains("encrypt") || eventType.Contains("encryption"))
+        {
+            return ActionKeys.FileEncrypt;
+        }
         if (eventType.Contains("browser"))
         {
             if (action.Contains("drop") || action.Contains("drag")) return ActionKeys.BrowserDragDrop;
@@ -179,3 +186,4 @@ public sealed class SecurityEventFactory(
         return cleaned.Length <= maximumLength ? cleaned : cleaned[..maximumLength];
     }
 }
+

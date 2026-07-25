@@ -1,0 +1,30 @@
+Company DLP v1.1.0 Central Admin - Package Validation Report
+Generated UTC: 2026-07-05T07:53:40Z
+
+Input source
+- File: CompanyDlp_v1.0.10_Source.zip
+- SHA-256: 5e5d706549cd9bf09d2b40a4e066904e1cac7c26ecb7c2f054e0a95a0d01ba69
+
+Implementation delta
+- Added source/documentation files: 80
+- Modified existing files: 17
+- Removed existing files: 0
+
+Executed successfully in the packaging environment
+- Angular 21 production build: PASSED
+- Angular initial bundle: 304.15 kB raw / 81.53 kB estimated transfer
+- JSON parsing: PASSED (16 files)
+- XML project/props parsing: PASSED (10 files)
+- OpenAPI YAML parsing: PASSED (2 contracts)
+- C# lexical/delimiter validation: PASSED (111 files)
+- PowerShell brace smoke check: PASSED (29 scripts)
+- ProjectReference path validation: PASSED (14 references)
+- EF Core model snapshot scalar-property coverage: PASSED
+- Private-key material scan: PASSED
+
+Not executed in this environment
+- dotnet restore/build/test were not executed because the environment does not contain a .NET SDK and DNS was unavailable for SDK installation.
+- Run VERIFY_CENTRAL_ADMIN.bat and VERIFY_WINDOWS_READY.bat on the target Windows development machine before accepting or deploying the build.
+
+Packaging exclusions
+- node_modules, Angular dist output, .angular cache, bin, obj, and local .development state are excluded.

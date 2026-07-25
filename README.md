@@ -1,122 +1,116 @@
-# Company DLP Windows Ready v1
+# Company DLP v1.1.0 — Windows Endpoint + Central Administration
 
-This repository is the Windows endpoint implementation prepared for functional testing before the central ASP.NET Core/SQL Server backend is built.
+This source package contains the Windows DLP endpoint and a complete central-management vertical slice:
 
-The Windows agent already uses the final versioned contracts for policy synchronization, heartbeat, audit-event batching, device enrollment, file-key wrapping, and future AI file classification. During testing, `CompanyDlp.MockServer` implements those same contracts locally. A real backend can replace the mock by implementing `contracts/company-dlp-agent-api.openapi.yaml` and changing production configuration; the Windows enforcement code does not need to be rewritten.
+```text
+Angular Admin Portal
+        ↓ JWT/RBAC
+ASP.NET Core Admin API
+        ↓ EF Core
+Microsoft SQL Server
+        ↓ signed, device-targeted policy
+Windows Service + Desktop Agent + Browser Bridge
+```
 
-## Projects
+Administrators change permissions centrally. The API stores the decision, increments the tenant policy revision, and compiles a snapshot only for the target device. The Windows agent learns about the new revision through heartbeat, downloads the snapshot, verifies its identity/version/expiry/signature, and applies the existing fail-closed `PermissionEvaluator`.
 
-- `CompanyDlp.Contracts`: versioned IPC, policy, permission, audit, backend, encryption-key, and file-classification contracts.
-- `CompanyDlp.Service`: Windows Service, policy engine, encrypted audit outbox, backend synchronization, USB/software/recorder monitoring, file encryption, and session-agent supervision.
-- `CompanyDlp.Desktop`: per-user WPF session agent for clipboard, watermark, screenshot shortcuts, recorder controls, notifications, and Explorer commands.
-- `CompanyDlp.NativeHost`: authenticated browser Native Messaging bridge.
-- `CompanyDlp.MockServer`: development-only backend simulator using the final API contracts.
-- `CompanyDlp.Tests`: policy and cryptographic tests.
-- `browser-extension`: Chrome/Edge Manifest V3 protection.
-- `firefox-extension`: Firefox development protection.
+## Included projects
 
-## First run
+- `CompanyDlp.AdminApi`: ASP.NET Core API, EF Core SQL Server persistence, onboarding/login, administrator RBAC, employees, devices, enrollment, permissions, policy compilation, audit, and agent endpoints.
+- `CompanyDlp.AdminPortal`: Angular 21 standalone portal for onboarding, login, administrators, employees, devices, enrollment codes, permissions, base policy, and audit.
+- `CompanyDlp.Contracts`: versioned IPC, policy, permission, audit, backend, encryption-key, and classification contracts.
+- `CompanyDlp.Core`: testable business and file-protection logic.
+- `CompanyDlp.Service`: Windows Service, protected policy cache, heartbeat/sync, audit outbox, USB/software/recorder monitoring, encryption, and session supervision.
+- `CompanyDlp.Desktop`: per-user WPF agent for clipboard, watermark, screenshot/recording controls, notifications, and Explorer actions.
+- `CompanyDlp.NativeHost` and `CompanyDlp.BrowserBridge`: authenticated browser integration.
+- `CompanyDlp.MockServer`: isolated development backend that follows the agent contract.
+- `CompanyDlp.Tests`: policy, permission, cryptographic, central policy, and synchronization tests.
+- `browser-extension` and `firefox-extension`: managed browser protections.
 
-Requirements:
+## Requirements
 
 - Windows 10/11 x64.
 - .NET 8 SDK.
+- SQL Server LocalDB for development, or another Microsoft SQL Server instance.
+- Node.js 20+ and npm for the Angular portal.
 - PowerShell 5.1 or PowerShell 7.
-- Administrator PowerShell for USB/device and machine-policy tests.
-- Node.js is optional and used only for JavaScript syntax validation.
+- Administrator PowerShell for machine policy, USB, service, and Explorer integration tests.
 
-Run verification first:
+## Verify everything on Windows
 
 ```powershell
+.\VERIFY_CENTRAL_ADMIN.bat
 .\VERIFY_WINDOWS_READY.bat
 ```
 
-Then run the complete development environment:
+`VERIFY_CENTRAL_ADMIN.bat` restores/builds the .NET solution, runs the .NET tests, performs a clean `npm ci`, and builds the Angular production bundle.
+
+## Start the central administration system
 
 ```powershell
+.\START_CENTRAL_ADMIN.bat
+```
+
+Development addresses:
+
+- Admin API: `http://127.0.0.1:5060`
+- Admin Portal: `http://127.0.0.1:4200`
+
+Open the portal, create the first tenant/Owner through Onboarding, then create employees, enrollment codes, assign devices, and manage permissions.
+
+The development API automatically applies the included initial migration to LocalDB. Production keeps automatic migration disabled.
+
+## Connect a Windows endpoint
+
+Create a one-time enrollment code in the portal, then run:
+
+```powershell
+.\CONNECT_DEVELOPMENT_TO_ADMIN.bat -TenantId '<tenant-guid>'
 .\START_DEVELOPMENT.bat
 ```
 
-The development runner builds the solution, starts the contract-compatible Mock Server, starts the Windows service process, registers temporary Explorer actions, and opens the Desktop through signed `dotnet.exe` so Smart App Control does not block an unsigned Debug apphost.
+When the central-development policy is active, `START_DEVELOPMENT.bat` health-checks the Admin API and does not start the local Mock Server.
 
-Close the Company DLP window to stop the development environment and restore temporary registry/browser changes.
+## Permission model
 
-## Temporary permission testing
+Actions include screenshot, screen recording, clipboard, browser upload/drag-drop/paste, USB, software installation/execution, and file encryption/decryption.
 
-Keep `START_DEVELOPMENT.bat` running, then open another PowerShell window:
+A permission can be:
 
-```powershell
-.\SET_DEVELOPMENT_PERMISSION.bat
-```
+- `Allow` or `Block`;
+- permanent or temporary using `ExpiresAtUtc`;
+- normal or emergency deny;
+- scoped to Global, Employee, Device, Department, User SID, Username, or Machine Name.
 
-The grant is scoped to the current Windows user SID and has a UTC expiry. The endpoint reevaluates the policy locally, so the permission expires without a command from the backend. A `TemporaryPermissionExpired` audit event is queued automatically.
+Emergency deny wins. Expired permissions stop applying locally even if the backend is temporarily unavailable.
 
-View synchronized events:
+## Administrator roles
 
-```powershell
-.\SHOW_DEVELOPMENT_EVENTS.bat
-```
+- `Owner`: full management, including administrator accounts.
+- `PolicyAdmin`: employees, devices, enrollment, permissions, policy, and audit.
+- `Auditor`: read-only endpoint and administrator audit views.
 
-## Backend replacement
+Changing an administrator role/status/password increments its token version and immediately invalidates old JWTs. The last active Owner cannot be disabled or demoted.
 
-The real backend must implement:
+## Security boundaries
 
-```text
-POST /api/v1/agent/enroll
-POST /api/v1/agent/heartbeat
-GET  /api/v1/agent/policy
-POST /api/v1/agent/events/batch
-POST /api/v1/agent/file-classification
-POST /api/v1/agent/file-keys/wrap
-POST /api/v1/agent/file-keys/unwrap
-```
+- Production policy snapshots use ECDSA P-256/SHA-256.
+- Device access tokens and enrollment codes are stored only as hashes.
+- Admin passwords use PBKDF2-SHA256 with per-user salts and 210,000 iterations.
+- File-key wrap/unwrap checks the relevant central permission and protects envelopes using ASP.NET Core Data Protection.
+- Every central write creates an administrator audit entry.
+- Endpoint events are identity-checked, size-limited, integrity-validated, and idempotent on `(TenantId, EventId)`.
+- The endpoint keeps the last valid DPAPI-protected policy cache and remains fail-closed during backend outages.
 
-The authoritative contract is `contracts/company-dlp-agent-api.openapi.yaml`.
+## Production gates
 
-Production communication requires HTTPS, a DPAPI-protected device bearer token, signed policy snapshots, and a trusted code-signing pipeline. Development permits only the local mock and an explicitly marked unsigned development policy.
+This is a production-oriented user-mode architecture, not a claim of absolute kernel-level prevention. Before rollout complete the controls in `docs/PRODUCTION_GATES.md`, especially:
 
-After production installation and policy configuration, enroll without putting the one-time code in the process command line:
-
-```powershell
-.\scripts\enroll-production-agent.ps1 -EnrollmentCode '<one-time-code>'
-```
-
-## Important production gates
-
-This is a test-ready Windows implementation, not a claim that a user-mode prototype alone can provide absolute kernel-level DLP. Before rollout, complete the gates in `docs/PRODUCTION_GATES.md`, especially:
-
-- Authenticode signing for every EXE/DLL/installer.
-- A tested WDAC/App Control policy for installation and unapproved execution prevention.
-- Device Installation Restrictions or Microsoft Defender Device Control for pre-access USB enforcement.
+- Authenticode signing and a controlled release pipeline.
+- WDAC/App Control and Windows device-control policy.
 - Force-installed signed browser extensions and allowed-browser control.
-- Production backend, enrollment, ECDSA policy signing, and KMS/HSM integration.
-- Windows VM/device acceptance testing from `docs/WINDOWS_TEST_PLAN.md`.
+- TLS, secret management, reviewed database migrations, backups, observability, and WAF/rate-limit policy.
+- Protected ECDSA private key and KMS/HSM-backed file-key management.
+- Windows acceptance testing from `docs/WINDOWS_TEST_PLAN.md`.
 
-See `docs/WINDOWS_READY_ARCHITECTURE.md`, `docs/BACKEND_INTEGRATION.md`, and `docs/KNOWN_LIMITATIONS.md` before production use.
-
-
-## v1.0.3 testability boundary
-
-Business rules and file-protection logic are isolated in `CompanyDlp.Core`; unit tests never reference executable hosts.
-
-
-## v1.0.4 startup fix
-Development startup launches Mock Server, Service, and Desktop through the signed `dotnet.exe` host to remain compatible with Smart App Control. Runtime logs are written under `.development/logs`.
-
-## v1.0.5 launcher diagnostics
-
-Development startup creates logs before the first runtime step:
-
-- `.development/logs/launcher.log`
-- `.development/logs/launcher.error.log`
-- `.development/logs/launcher.transcript.log`
-- `.development/logs/mock-server.stdout.log`
-- `.development/logs/mock-server.stderr.log`
-- `.development/logs/service.stdout.log`
-- `.development/logs/service.stderr.log`
-
-Use `START_DEVELOPMENT_CORE_ONLY.bat` to isolate Mock Server, Service, and Desktop startup from File Explorer shell registration.
-
-## v1.0.6 startup false-positive fix
-
-The software monitor establishes a baseline on startup and no longer reports existing Windows servicing processes as user installation attempts. See `CHANGELOG_v1.0.6.md`.
+Read `QUICK_START_AR.md`, `docs/CENTRAL_ADMIN_API.md`, `docs/ARCHITECTURE.md`, `docs/BACKEND_INTEGRATION.md`, and `IMPLEMENTATION_REPORT_v1.1.0_AR.md` before deployment.

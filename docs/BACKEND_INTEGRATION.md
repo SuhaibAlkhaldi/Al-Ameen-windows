@@ -57,3 +57,9 @@ Current endpoint policy uses provider `BlockAll`. The AI team later implements `
 ## Database mapping suggestion
 
 The endpoint does not depend on database tables. The backend may map contracts to `Devices`, `Policies`, `PolicyRules`, `PermissionGrants`, `SecurityEvents`, `FileProtectionTransactions`, and `AgentHeartbeats`. Preserve raw accepted event envelopes or a lossless normalized representation for auditability.
+
+## Reference backend implementation
+
+`src/CompanyDlp.AdminApi` now implements the published agent endpoints plus the separate administrator contract in `contracts/company-dlp-admin-api.openapi.yaml`. The Mock Server remains useful for isolated endpoint development; the Admin API is the reference central-management vertical slice backed by Microsoft SQL Server.
+
+The endpoint heartbeat now honors `policyRefreshRequired`. A positive response wakes the policy synchronization worker immediately while retaining the regular polling interval as a fallback.
