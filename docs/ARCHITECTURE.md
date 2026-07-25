@@ -2,11 +2,13 @@
 
 ## Components
 
-1. **CompanyDlp.Service** — privileged policy engine, browser machine-policy enforcement, USB monitoring/blocking, audit logging, fragment tracking, and named-pipe API.
-2. **CompanyDlp.Desktop** — per-user WPF agent for desktop watermark, clipboard monitoring, screenshot shortcut blocking, development test sessions, and local status.
-3. **CompanyDlp.NativeHost** — Chrome/Edge Native Messaging bridge between the managed extension and the Windows service.
-4. **browser-extension** — blocks file upload, file drag/drop, file/image paste, sensitive copy, sensitive input, and form submission; adds a repeated browser watermark.
-5. **PowerShell scripts** — development start/restore and production publish/install/uninstall.
+1. **CompanyDlp.AdminPortal** — Angular control plane for onboarding, administrators, employees, devices, permissions, policy, and audit.
+2. **CompanyDlp.AdminApi** — ASP.NET Core/SQL Server policy authority, device enrollment, policy signing, audit ingestion, and file-key service.
+3. **CompanyDlp.Service** — privileged policy engine, browser machine-policy enforcement, USB monitoring/blocking, audit logging, fragment tracking, and named-pipe API.
+4. **CompanyDlp.Desktop** — per-user WPF agent for desktop watermark, clipboard monitoring, screenshot shortcut blocking, development test sessions, and local status.
+5. **CompanyDlp.NativeHost** — Chrome/Edge Native Messaging bridge between the managed extension and the Windows service.
+6. **browser-extension** — blocks file upload, file drag/drop, file/image paste, sensitive copy, sensitive input, and form submission; adds a repeated browser watermark.
+7. **PowerShell scripts** — development start/restore and production publish/install/uninstall.
 
 ## Trust boundary
 
@@ -33,3 +35,11 @@ Exact values can use normalization, so punctuation, spaces, `@`, and dots do not
 - A bundle that has a forbidden function such as storage, WPD phone, network adapter, serial port, camera, printer, or media device is not treated as input-only.
 - Existing USB bundles at first run form a trusted baseline to avoid disabling integrated laptop hardware that internally uses USB.
 - Disconnect non-input external devices before creating the production baseline.
+
+## Central administration plane
+
+`CompanyDlp.AdminApi` is a separate trust boundary from the endpoint. Administrator operations are authenticated with role-based JWTs. Agent operations use opaque per-device bearer tokens created by one-time enrollment. The backend stores only token hashes.
+
+Every tenant has a monotonic `PolicyRevision`. Employee changes, device assignments, base-policy changes, and permission changes increment it. Heartbeat compares the endpoint's applied revision to the tenant revision and requests an immediate refresh when they differ.
+
+The backend compiles a policy for one device at a time. Employee and department grants are converted into the best concrete endpoint identity available (Windows SID, username, then device ID). Unrelated employees' grants are never included in that endpoint snapshot. Production snapshots are signed with ECDSA P-256/SHA-256 and validated before the protected local cache is replaced.

@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Download blocked</title>
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #f4f6f8;
+      font-family: Arial, sans-serif;
+    }
+
+    main {
+      width: min(520px, calc(100% - 48px));
+      padding: 36px;
+      border-radius: 16px;
+      background: white;
+      box-shadow: 0 12px 40px rgba(0,0,0,.14);
+      text-align: center;
+    }
+
+    h1 {
+      margin-top: 0;
+      color: #b42318;
+    }
+
+    p {
+      color: #344054;
+      line-height: 1.6;
+    }
+
+    button {
+      margin-top: 16px;
+      padding: 10px 24px;
+      border: 0;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Download blocked</h1>
+    <p>
+      Company DLP prevented this file from being downloaded
+      because downloads are blocked by the current security policy.
+    </p>
+    <button id="closeButton">Close</button>
+  </main>
+
+  <script src="download-blocked.js"></script>
+</body>
+</html>

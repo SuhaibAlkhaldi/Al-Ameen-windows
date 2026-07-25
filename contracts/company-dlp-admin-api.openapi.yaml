@@ -1,0 +1,285 @@
+openapi: 3.1.0
+info:
+  title: Company DLP Central Admin API
+  version: 1.1.0
+  description: Central tenant, employee, device, permission, policy, and audit management API.
+servers:
+  - url: https://dlp-api.example.com
+paths:
+  /api/v1/admin/onboarding/register:
+    post:
+      summary: Create the first tenant owner account or onboard a tenant when public onboarding is enabled.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OnboardingRequest' }
+      responses:
+        '201':
+          description: Tenant and owner created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LoginResponse' }
+  /api/v1/admin/auth/login:
+    post:
+      summary: Authenticate an administrator.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: JWT access token.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LoginResponse' }
+        '401': { description: Invalid credentials. }
+  /api/v1/admin/admin-users:
+    get:
+      security: [{ adminBearer: [] }]
+      summary: List tenant administrator accounts. Owner role required.
+      responses: { '200': { description: Administrator list. }, '403': { description: Owner role required. } }
+    post:
+      security: [{ adminBearer: [] }]
+      summary: Create an Owner, PolicyAdmin, or Auditor account. Owner role required.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AdminUserCreateRequest' }
+      responses: { '201': { description: Administrator created. }, '403': { description: Owner role required. }, '409': { description: Email already exists. } }
+  /api/v1/admin/admin-users/{adminUserId}:
+    put:
+      security: [{ adminBearer: [] }]
+      summary: Change administrator role/status or reset the password. The last active Owner cannot be removed.
+      parameters:
+        - { in: path, name: adminUserId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AdminUserUpdateRequest' }
+      responses: { '200': { description: Administrator updated. }, '403': { description: Owner role required. }, '404': { description: Not found. }, '409': { description: Owner lockout prevented. } }
+  /api/v1/admin/actions:
+    get:
+      security: [{ adminBearer: [] }]
+      summary: List supported permission action keys.
+      responses:
+        '200':
+          description: Action keys.
+          content:
+            application/json:
+              schema: { type: array, items: { type: string } }
+  /api/v1/admin/employees:
+    get:
+      security: [{ adminBearer: [] }]
+      summary: List employees.
+      responses: { '200': { description: Employee list. } }
+    post:
+      security: [{ adminBearer: [] }]
+      summary: Create an employee.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EmployeeUpsertRequest' }
+      responses: { '201': { description: Employee created. } }
+  /api/v1/admin/employees/{employeeId}:
+    put:
+      security: [{ adminBearer: [] }]
+      summary: Update an employee.
+      parameters:
+        - { in: path, name: employeeId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EmployeeUpsertRequest' }
+      responses: { '200': { description: Employee updated. }, '404': { description: Not found. } }
+  /api/v1/admin/devices:
+    get:
+      security: [{ adminBearer: [] }]
+      summary: List enrolled devices and endpoint status.
+      responses: { '200': { description: Device list. } }
+  /api/v1/admin/devices/{deviceId}/assignment:
+    put:
+      security: [{ adminBearer: [] }]
+      summary: Assign or unassign an enrolled device to an employee.
+      parameters:
+        - { in: path, name: deviceId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                employeeId: { type: [string, 'null'], format: uuid }
+      responses: { '204': { description: Assignment updated. } }
+  /api/v1/admin/devices/{deviceId}/revoke:
+    post:
+      security: [{ adminBearer: [] }]
+      summary: Disable a device and revoke its bearer token.
+      parameters:
+        - { in: path, name: deviceId, required: true, schema: { type: string, format: uuid } }
+      responses: { '204': { description: Device revoked. } }
+  /api/v1/admin/enrollment-codes:
+    post:
+      security: [{ adminBearer: [] }]
+      summary: Create a one-time endpoint enrollment code.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                description: { type: string }
+                validForMinutes: { type: integer, minimum: 5, maximum: 1440 }
+      responses:
+        '200':
+          description: Plain enrollment code returned once.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  enrollmentCode: { type: string }
+                  expiresAtUtc: { type: string, format: date-time }
+  /api/v1/admin/permissions:
+    get:
+      security: [{ adminBearer: [] }]
+      summary: List permission grants including revoked and expired records.
+      responses: { '200': { description: Permission list. } }
+    post:
+      security: [{ adminBearer: [] }]
+      summary: Create an Allow, Block, temporary, permanent, or emergency-deny grant.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PermissionGrantUpsertRequest' }
+      responses: { '201': { description: Permission created. } }
+  /api/v1/admin/permissions/{grantId}:
+    put:
+      security: [{ adminBearer: [] }]
+      summary: Edit an active permission grant.
+      parameters:
+        - { in: path, name: grantId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PermissionGrantUpsertRequest' }
+      responses: { '200': { description: Permission updated. } }
+    delete:
+      security: [{ adminBearer: [] }]
+      summary: Revoke a grant while preserving its audit history.
+      parameters:
+        - { in: path, name: grantId, required: true, schema: { type: string, format: uuid } }
+      responses: { '204': { description: Permission revoked. } }
+  /api/v1/admin/policy:
+    get:
+      security: [{ adminBearer: [] }]
+      summary: Get the tenant base policy.
+      responses: { '200': { description: Tenant policy. } }
+    put:
+      security: [{ adminBearer: [] }]
+      summary: Replace the tenant base policy. Permission grants are managed separately.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [policy]
+              properties:
+                policy: { type: object, additionalProperties: true }
+      responses: { '200': { description: Policy updated and revision incremented. } }
+  /api/v1/admin/audit-events:
+    get:
+      security: [{ adminBearer: [] }]
+      summary: Read endpoint security events.
+      parameters:
+        - { in: query, name: take, schema: { type: integer, minimum: 1, maximum: 1000 } }
+      responses: { '200': { description: Event list. } }
+  /api/v1/admin/admin-audit:
+    get:
+      security: [{ adminBearer: [] }]
+      summary: Read administrator change audit records.
+      parameters:
+        - { in: query, name: take, schema: { type: integer, minimum: 1, maximum: 1000 } }
+      responses: { '200': { description: Admin audit list. } }
+components:
+  securitySchemes:
+    adminBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    OnboardingRequest:
+      type: object
+      required: [tenantName, adminDisplayName, email, password]
+      properties:
+        tenantName: { type: string, maxLength: 200 }
+        adminDisplayName: { type: string, maxLength: 200 }
+        email: { type: string, format: email }
+        password: { type: string, minLength: 12, writeOnly: true }
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, writeOnly: true }
+    LoginResponse:
+      type: object
+      properties:
+        accessToken: { type: string }
+        expiresAtUtc: { type: string, format: date-time }
+        tenantId: { type: string, format: uuid }
+        adminUserId: { type: string, format: uuid }
+        role: { type: string }
+        displayName: { type: string }
+    AdminUserCreateRequest:
+      type: object
+      required: [email, displayName, password, role]
+      properties:
+        email: { type: string, format: email, maxLength: 320 }
+        displayName: { type: string, maxLength: 200 }
+        password: { type: string, minLength: 12, maxLength: 1024, writeOnly: true }
+        role: { type: string, enum: [Owner, PolicyAdmin, Auditor] }
+    AdminUserUpdateRequest:
+      type: object
+      required: [displayName, role, isActive]
+      properties:
+        displayName: { type: string, maxLength: 200 }
+        role: { type: string, enum: [Owner, PolicyAdmin, Auditor] }
+        isActive: { type: boolean }
+        newPassword: { type: [string, 'null'], minLength: 12, maxLength: 1024, writeOnly: true }
+    EmployeeUpsertRequest:
+      type: object
+      required: [employeeNumber, displayName]
+      properties:
+        employeeNumber: { type: string, maxLength: 100 }
+        displayName: { type: string, maxLength: 200 }
+        username: { type: string, maxLength: 256 }
+        windowsSid: { type: string, maxLength: 256 }
+        department: { type: string, maxLength: 200 }
+        isActive: { type: boolean, default: true }
+    PermissionGrantUpsertRequest:
+      type: object
+      required: [actionKey, allowed, scopeType, scopeId]
+      properties:
+        actionKey: { type: string }
+        allowed: { type: boolean }
+        scopeType:
+          type: string
+          enum: [Global, Employee, Device, Department, UserSid, Username, MachineName]
+        scopeId: { type: string }
+        priority: { type: integer, minimum: 0, maximum: 10000, default: 100 }
+        startsAtUtc: { type: [string, 'null'], format: date-time }
+        expiresAtUtc: { type: [string, 'null'], format: date-time }
+        reason: { type: string, maxLength: 1000 }
+        emergencyDeny: { type: boolean, default: false }

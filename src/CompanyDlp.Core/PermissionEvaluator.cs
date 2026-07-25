@@ -19,10 +19,8 @@ public sealed class PermissionEvaluator(ITrustedClock? trustedClock = null)
 
         var candidates = policy.Permissions.Grants
             .Where(grant => grant.ActionKey.Equals(actionKey, StringComparison.OrdinalIgnoreCase))
-            .Where(grant => grant.RevokedAtUtc is null)
-            .Where(grant => grant.StartsAtUtc <= evaluationTimeUtc)
-            .Where(grant => grant.ExpiresAtUtc is null || grant.ExpiresAtUtc > evaluationTimeUtc)
             .Where(grant => MatchesSubject(grant, context, identity))
+            .Where(grant => IsActive(grant, evaluationTimeUtc))
             .OrderByDescending(grant => IsEmergencyDeny(grant))
             .ThenByDescending(grant => grant.Priority)
             .ThenByDescending(grant => SubjectSpecificity(grant.SubjectType))
@@ -53,7 +51,7 @@ public sealed class PermissionEvaluator(ITrustedClock? trustedClock = null)
                 IsAllowed = selected.Allowed,
                 ReasonCode = IsEmergencyDeny(selected)
                     ? "EmergencyDeny"
-                    : selected.Source.Equals(PermissionSources.TemporaryGrant, StringComparison.OrdinalIgnoreCase)
+                    : isTemporary
                         ? "TemporaryPermissionActive"
                         : "PermissionGrantMatched",
                 PermissionGrantId = selected.GrantId,
@@ -72,6 +70,14 @@ public sealed class PermissionEvaluator(ITrustedClock? trustedClock = null)
             ReasonCode = allowed ? "GlobalDefaultAllow" : "GlobalDefaultDeny",
             PermissionSource = PermissionSources.GlobalDefault
         };
+    }
+
+    private static bool IsActive(PermissionGrant grant, DateTimeOffset nowUtc)
+    {
+        if (grant.RevokedAtUtc is not null) return false;
+        if (grant.StartsAtUtc > nowUtc) return false;
+        if (grant.ExpiresAtUtc is not null && grant.ExpiresAtUtc <= nowUtc) return false;
+        return true;
     }
 
     private static bool IsEmergencyDeny(PermissionGrant grant) =>

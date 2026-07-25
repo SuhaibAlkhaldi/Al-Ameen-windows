@@ -29,7 +29,11 @@ public sealed class ScreenCaptureHotkeyBlocker : IDisposable
     private readonly LowLevelKeyboardProc _callback;
     private IntPtr _hook;
 
-    public ScreenCaptureHotkeyBlocker(ScreenPolicy policy, PipeClient pipeClient, Action<string> statusCallback, Action<string, string> alertCallback)
+    public ScreenCaptureHotkeyBlocker(
+        ScreenPolicy policy,
+        PipeClient pipeClient,
+        Action<string> statusCallback,
+        Action<string, string> alertCallback)
     {
         _policy = policy;
         _pipeClient = pipeClient;

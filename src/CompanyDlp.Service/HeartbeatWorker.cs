@@ -8,15 +8,16 @@ public sealed class HeartbeatWorker(
     AuditOutbox outbox,
     BackendApiClient backendApiClient,
     TrustedClock trustedClock,
+    PolicyRefreshSignal refreshSignal,
     ILogger<HeartbeatWorker> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
         {
+            var policy = policyStore.Get();
             try
             {
-                var policy = policyStore.Get();
                 if (policy.Backend.Enabled)
                 {
                     var identity = identityProvider.Get();
@@ -32,6 +33,8 @@ public sealed class HeartbeatWorker(
                         PendingAuditEventCount = status.PendingCount
                     }, stoppingToken);
                     trustedClock.ObserveServerTime(response.ServerTimeUtc);
+                    if (response.PolicyRefreshRequired)
+                        refreshSignal.RequestRefresh();
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -43,7 +46,8 @@ public sealed class HeartbeatWorker(
                 logger.LogDebug(exception, "Company DLP heartbeat failed.");
             }
 
-            await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
+            var delay = TimeSpan.FromSeconds(Math.Clamp(policy.Backend.HeartbeatSeconds, 10, 3600));
+            await Task.Delay(delay, stoppingToken);
         }
     }
 }

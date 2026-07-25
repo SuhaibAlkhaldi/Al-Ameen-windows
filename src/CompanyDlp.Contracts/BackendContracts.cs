@@ -16,6 +16,7 @@ public sealed class BackendPolicy
     public int AuditBatchSize { get; set; } = 100;
     public int AuditSyncSeconds { get; set; } = 5;
     public int PolicySyncSeconds { get; set; } = 30;
+    public int HeartbeatSeconds { get; set; } = 30;
     public bool AllowUnsignedDevelopmentPolicy { get; set; } = true;
     public string PolicySigningPublicKeyPem { get; set; } = "";
     public string AuthenticationMode { get; set; } = BackendAuthenticationModes.DevelopmentNone;
