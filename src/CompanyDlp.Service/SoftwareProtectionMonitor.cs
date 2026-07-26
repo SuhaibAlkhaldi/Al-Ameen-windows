@@ -174,12 +174,18 @@ public sealed class SoftwareProtectionMonitor(
         }
     }
 
-    private static ProcessMetadata TryGetMetadata(int processId)
+    private ProcessMetadata TryGetMetadata(int processId)
     {
         try
         {
+            // Must be a full-object query (SELECT *), not a narrow property projection: ManagementObject
+            // instances obtained from a partial SELECT throw InvalidOperationException when InvokeMethod
+            // is called on them (a documented System.Management quirk), which silently broke GetOwnerSid/
+            // GetOwner below and left every SoftwareInstall grant's UserSid/Username context empty. This
+            // query only ever targets a single already-identified process, so the wider column set has no
+            // meaningful cost.
             using var searcher = new ManagementObjectSearcher(
-                $"SELECT Name, ExecutablePath, CommandLine FROM Win32_Process WHERE ProcessId={processId}");
+                $"SELECT * FROM Win32_Process WHERE ProcessId={processId}");
             foreach (ManagementObject item in searcher.Get())
             {
                 var executablePath = item["ExecutablePath"]?.ToString() ?? "";
@@ -197,7 +203,12 @@ public sealed class SoftwareProtectionMonitor(
                     var ownerResult = Convert.ToUInt32(item.InvokeMethod("GetOwner", ownerOutput));
                     if (ownerResult == 0) username = $"{ownerOutput[1]}\\{ownerOutput[0]}".Trim('\\');
                 }
-                catch { }
+                catch (Exception exception)
+                {
+                    logger.LogWarning(exception,
+                        "Could not resolve the owning user for process {ProcessId} ({ProcessName}); the SoftwareInstall permission decision for this process will fall back to a subject-less (Global/DeviceId/MachineName only) grant match.",
+                        processId, processName);
+                }
 
                 return new ProcessMetadata(
                     processName,
@@ -208,7 +219,10 @@ public sealed class SoftwareProtectionMonitor(
                     TryGetPublisher(executablePath));
             }
         }
-        catch { }
+        catch (Exception exception)
+        {
+            logger.LogWarning(exception, "Could not query WMI process metadata for process {ProcessId}", processId);
+        }
 
         return new ProcessMetadata("unknown", "", "", "", "", "");
     }

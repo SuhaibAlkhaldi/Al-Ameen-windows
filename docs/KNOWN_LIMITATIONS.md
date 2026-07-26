@@ -10,6 +10,12 @@ It cannot prevent an external camera, malicious kernel driver, compromised admin
 
 The user-mode `Block` mode detects and terminates common installer processes after process creation. Production policy is deliberately configured for `WindowsAppControl`, where Windows blocks unapproved code before normal execution and the agent ingests Code Integrity events. A signed, tested WDAC policy is an external deployment artifact and is not auto-generated from this repository.
 
+### `software.execute-unapproved` has no per-grant effect
+
+Confirmed directly: granting or revoking `software.execute-unapproved` for a specific employee currently changes nothing. Unapproved-execution blocking is enforced entirely by Windows WDAC/App Control at the OS/kernel level, before this agent's Service ever observes the attempt — the Service only reads the resulting Code Integrity event log afterward and records an audit entry. There is no mechanism today for a per-employee/per-device grant to alter what WDAC itself allows to run.
+
+Building real per-grant support for this action key would require dynamically generating and signing a supplemental WDAC policy update per grant (or per grant change) and deploying it to the target device — a substantial, security-sensitive feature in its own right (policy signing, safe rollout, revocation), not a small fix. This is intentionally out of scope for now and tracked as a distinct future feature rather than a bug to patch. Admins should treat this permission as informational/aspirational until that feature exists, not as a working control.
+
 ## USB
 
 Development `Block` uses PnPUtil after device arrival. This provides useful testing but may allow a short detection window. Production should deploy Device Installation Restrictions or Microsoft Defender Device Control so unapproved storage/mobile/composite devices are denied before usable access. HID spoofing is mitigated only by VID/PID/serial/hardware-ID allowlists, not by device class alone.

@@ -19,6 +19,17 @@ public sealed class UsbProtectionMonitor(
 {
     private readonly HashSet<string> _known = new(StringComparer.OrdinalIgnoreCase);
 
+    // Windows enumerates a newly-arrived USB device's PnP class information in stages, so the very first
+    // tick that observes a device can see an incomplete Classes list (e.g. mass-storage devices briefly
+    // report only "USB" before "DiskDrive" appears). Acting on that first tick — writing the one-time
+    // arrival audit/notification, or (in Block enforcement mode) disabling the device — could therefore
+    // permanently mislabel the ActionKey, or worse, evaluate the disable decision itself against the wrong
+    // (possibly more permissive) key. Every first-arrival device is held here and only acted on — audited
+    // and, if still denied, disabled — once the resolved gating key agrees across two consecutive ticks.
+    // This only delays the brief window right after first arrival: a device already known/classified from
+    // a prior tick is never re-routed through this dictionary, so normal operation has no added delay.
+    private readonly Dictionary<string, PendingUsbArrival> _pendingArrivals = new(StringComparer.OrdinalIgnoreCase);
+
     public IReadOnlyList<UsbDeviceBundleInfo> LastSnapshot { get; private set; } = [];
 
     public async Task TickAsync(bool initial, CancellationToken cancellationToken)
@@ -33,6 +44,13 @@ public sealed class UsbProtectionMonitor(
         var activeContext = interactiveUserContextProvider.GetActiveConsoleUser();
         var identity = identityProvider.Get();
 
+        // Every bundle's grant decision is computed exactly once here and reused below for the audit
+        // record and notification, instead of re-evaluating independently later in the same tick — two
+        // separate live evaluations of the same grant set could, in principle, diverge (e.g. from a grant
+        // change landing between the two calls) and made the gating outcome and the reported reason/grant
+        // id two separate sources of truth instead of one.
+        var decisionsByDevice = new Dictionary<string, PermissionDecision>(StringComparer.OrdinalIgnoreCase);
+
         foreach (var bundle in bundles)
         {
             bundle.IsTrustedBaseline = baseline.Contains(bundle.RootInstanceId);
@@ -46,6 +64,7 @@ public sealed class UsbProtectionMonitor(
                 activeContext,
                 identity,
                 DateTimeOffset.UtcNow);
+            decisionsByDevice[bundle.RootInstanceId] = userDecision;
 
             bundle.IsAllowed = safeHid || explicitlyApproved || bundle.IsTrustedBaseline || userDecision.IsAllowed;
         }
@@ -53,22 +72,44 @@ public sealed class UsbProtectionMonitor(
 
         var currentIds = bundles.Select(bundle => bundle.RootInstanceId).ToHashSet(StringComparer.OrdinalIgnoreCase);
         _known.RemoveWhere(id => !currentIds.Contains(id));
+        foreach (var pendingId in _pendingArrivals.Keys.Where(id => !currentIds.Contains(id)).ToList())
+        {
+            _pendingArrivals.Remove(pendingId);
+        }
 
         foreach (var bundle in bundles)
         {
             var isNew = _known.Add(bundle.RootInstanceId);
-            if (!isNew && !initial) continue;
+            var isSettling = _pendingArrivals.ContainsKey(bundle.RootInstanceId);
+            if (!isNew && !initial && !isSettling) continue;
 
             var gatingActionKey = ResolveGatingActionKey(bundle);
-            var deviceTypeLabel = DescribeGatedDeviceType(gatingActionKey);
-            var context = interactiveUserContextProvider.GetActiveConsoleUser();
-            var decision = permissionEvaluator.Evaluate(
-                policy,
-                gatingActionKey,
-                context,
-                identity,
-                DateTimeOffset.UtcNow);
             var mode = runtimeOverrides.GetUsbMode(policy.Usb.EnforcementMode);
+            var decision = decisionsByDevice[bundle.RootInstanceId];
+            _pendingArrivals.TryGetValue(bundle.RootInstanceId, out var pending);
+            var wasInitial = pending?.Initial ?? initial;
+
+            // Every first-arrival device — allowed, AuditOnly-blocked, or Block-mode-blocked alike — waits
+            // for the gating key to agree across two consecutive ticks before anything is acted on: no
+            // audit/notification write, and (this is the part that used to be immediate) no disable call
+            // either. A device still mid-settle is neither treated as allowed nor as finally blocked; it
+            // simply has no decision recorded yet, and is re-evaluated fresh next tick.
+            if (isNew || isSettling)
+            {
+                if (pending is not null && pending.GatingActionKey == gatingActionKey)
+                {
+                    _pendingArrivals.Remove(bundle.RootInstanceId);
+                    // Two consecutive ticks agree — falls through to act on the now-settled record.
+                }
+                else
+                {
+                    _pendingArrivals[bundle.RootInstanceId] = new PendingUsbArrival(gatingActionKey, wasInitial);
+                    continue;
+                }
+            }
+
+            var deviceTypeLabel = DescribeGatedDeviceType(gatingActionKey);
+            var context = activeContext;
             var details = JsonSerializer.Serialize(new
             {
                 bundle.DisplayName,
@@ -91,7 +132,7 @@ public sealed class UsbProtectionMonitor(
                 {
                     ActionKey = gatingActionKey,
                     EventType = "UsbDeviceAllowed",
-                    Action = initial ? "device-present-at-startup" : "device-arrival",
+                    Action = wasInitial ? "device-present-at-startup" : "device-arrival",
                     Method = ResolveAllowMethod(policy.Usb, bundle, decision),
                     Result = "allowed",
                     ReasonCode = ResolveAllowReason(policy.Usb, bundle, decision),
@@ -107,7 +148,7 @@ public sealed class UsbProtectionMonitor(
             {
                 ActionKey = gatingActionKey,
                 EventType = "UsbDeviceBlocked",
-                Action = initial ? "device-present-at-startup" : "device-arrival",
+                Action = wasInitial ? "device-present-at-startup" : "device-arrival",
                 Method = mode,
                 Result = mode.Equals("Block", StringComparison.OrdinalIgnoreCase) ? "block-requested" : "audit-only",
                 ReasonCode = decision.ReasonCode,
@@ -224,4 +265,6 @@ public sealed class UsbProtectionMonitor(
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool LockWorkStation();
+
+    private sealed record PendingUsbArrival(string GatingActionKey, bool Initial);
 }

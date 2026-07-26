@@ -176,15 +176,19 @@ public sealed class PolicyStore(
                 [ActionKeys.ScreenCapture] = false,
                 [ActionKeys.ScreenRecording] = false,
                 [ActionKeys.ClipboardCopySensitive] = false,
+                [ActionKeys.BrowserDownload] = false,
                 [ActionKeys.BrowserUpload] = false,
                 [ActionKeys.BrowserDragDrop] = false,
                 [ActionKeys.BrowserFilePaste] = false,
                 [ActionKeys.BrowserImagePaste] = false,
                 [ActionKeys.UsbDeviceConnect] = false,
+                [ActionKeys.UsbStorage] = false,
+                [ActionKeys.UsbMobileDevice] = false,
                 [ActionKeys.SoftwareInstall] = false,
                 [ActionKeys.SoftwareExecuteUnapproved] = false,
                 [ActionKeys.FileEncrypt] = true,
-                [ActionKeys.FileDecrypt] = true
+                [ActionKeys.FileDecrypt] = true,
+                [ActionKeys.AgentSession] = true
             }
         },
         SensitiveRules =

@@ -232,14 +232,27 @@ public sealed class PipeServer(
                 var result = classifier.Classify(input);
                 if (result.IsSensitive)
                 {
+                    // A ClipboardCopySensitive grant can allow this copy even though the content matched a
+                    // sensitive rule — the caller (Desktop/browser extension) only clears/blocks the copy when
+                    // the grant denies it. Recording this unconditionally as "blocked" produced a false audit
+                    // trail for permitted copies, which is exactly what made granted employees' actions look
+                    // like they were still being blocked.
+                    var decision = permissionEvaluator.Evaluate(
+                        policyStore.Get(),
+                        ActionKeys.ClipboardCopySensitive,
+                        request.Context,
+                        identityProvider.Get(),
+                        DateTimeOffset.UtcNow);
+
                     await auditLogger.WriteAsync(new AuditEvent
                     {
                         ActionKey = ActionKeys.ClipboardCopySensitive,
-                        EventType = "SensitiveClipboardCopyBlocked",
+                        EventType = decision.IsAllowed ? "SensitiveClipboardCopyAllowed" : "SensitiveClipboardCopyBlocked",
                         Action = input.Channel,
                         Method = input.Channel,
-                        Result = "blocked",
-                        ReasonCode = "SensitiveContentRuleMatched",
+                        Result = decision.IsAllowed ? "allowed" : "blocked",
+                        ReasonCode = decision.IsAllowed ? decision.ReasonCode : "SensitiveContentRuleMatched",
+                        PermissionGrantId = decision.PermissionGrantId,
                         RuleId = result.Matches.FirstOrDefault()?.RuleId ?? "",
                         Details = result.FragmentAssemblyDetected ? "Fragment assembly detected" : "Sensitive rule matched"
                     }, request.Context, cancellationToken);

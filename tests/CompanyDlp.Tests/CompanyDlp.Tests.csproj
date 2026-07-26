@@ -15,5 +15,6 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\CompanyDlp.Core\CompanyDlp.Core.csproj" />
     <ProjectReference Include="..\..\src\CompanyDlp.Contracts\CompanyDlp.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\CompanyDlp.Service\CompanyDlp.Service.csproj" />
   </ItemGroup>
 </Project>

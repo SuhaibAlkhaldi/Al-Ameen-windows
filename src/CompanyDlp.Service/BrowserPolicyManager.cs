@@ -37,7 +37,7 @@ public sealed class BrowserPolicyManager(
                 ApplyEdge(policy.Browser, blockDownloads);
                 ApplyChrome(policy.Browser, blockDownloads);
             }
-            ApplyWindowsScreenCapturePolicy(policy.Screen);
+            ApplyWindowsScreenCapturePolicy(policy.Screen, ResolveDisableGameCapture(policy));
             await auditLogger.WriteAsync(new AuditEvent
             {
                 EventType = "browser-policy",
@@ -64,25 +64,35 @@ public sealed class BrowserPolicyManager(
     private bool ResolveBlockDownloads(DlpPolicy policy)
     {
         if (!policy.Browser.BlockDownloads) return false;
-
-        var context = interactiveUserContextProvider.GetActiveConsoleUser();
-        var decision = permissionEvaluator.Evaluate(
-            policy,
-            ActionKeys.BrowserDownload,
-            context,
-            identityProvider.Get(),
-            DateTimeOffset.UtcNow);
-
-        return !decision.IsAllowed;
+        return ShouldBlockForMissingGrant(policy, permissionEvaluator, ActionKeys.BrowserDownload,
+            interactiveUserContextProvider.GetActiveConsoleUser(), identityProvider.Get());
     }
 
-    private static void ApplyWindowsScreenCapturePolicy(ScreenPolicy policy)
+    // Mirrors ResolveBlockDownloads: DisableWindowsGameCapture is part of the per-subject-grantable
+    // ScreenRecording permission (see EffectivePolicyBuilder, which already relaxes this flag when the
+    // grant allows it), but this machine-wide registry policy is the only Production-mode enforcement
+    // point for it — without this check a ScreenRecording grant would relax the cached flag the Desktop
+    // app reads while leaving Game Bar/GameDVR recording blocked at the OS level regardless.
+    private bool ResolveDisableGameCapture(DlpPolicy policy)
+    {
+        if (!policy.Screen.Enabled || !policy.Screen.DisableWindowsGameCapture) return false;
+        return ShouldBlockForMissingGrant(policy, permissionEvaluator, ActionKeys.ScreenRecording,
+            interactiveUserContextProvider.GetActiveConsoleUser(), identityProvider.Get());
+    }
+
+    // Internal (not private) and static so it's directly unit-testable without constructing the full
+    // BrowserPolicyManager dependency graph (PolicyStore/AuditLogger/etc. touch real files and DPAPI).
+    internal static bool ShouldBlockForMissingGrant(
+        DlpPolicy policy, PermissionEvaluator evaluator, string actionKey, ClientContext context, AgentIdentity identity)
+        => !evaluator.Evaluate(policy, actionKey, context, identity, DateTimeOffset.UtcNow).IsAllowed;
+
+    private static void ApplyWindowsScreenCapturePolicy(ScreenPolicy policy, bool disableGameCapture)
     {
         const string gameDvrPath = @"SOFTWARE\Policies\Microsoft\Windows\GameDVR";
         using var key = Registry.LocalMachine.CreateSubKey(gameDvrPath, true)
             ?? throw new InvalidOperationException("Could not open the Windows GameDVR policy registry key.");
 
-        SetOrDeleteDword(key, "AllowGameDVR", policy.Enabled && policy.DisableWindowsGameCapture, 0);
+        SetOrDeleteDword(key, "AllowGameDVR", policy.Enabled && disableGameCapture, 0);
     }
 
     private static void ApplyEdge(BrowserPolicy policy, bool blockDownloads)
