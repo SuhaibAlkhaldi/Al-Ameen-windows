@@ -15,6 +15,13 @@ $out = Join-Path $root "artifacts\publish"
 Remove-Item $out -Recurse -Force -ErrorAction SilentlyContinue
 New-Item $out -ItemType Directory -Force | Out-Null
 
+if ($ExtensionPrivateKeyPath) {
+    # Pack browser-extension FIRST so the copy below picks up the version bump this run produced.
+    if (-not $ExtensionUpdateBaseUrl) { throw "-ExtensionUpdateBaseUrl is required together with -ExtensionPrivateKeyPath." }
+    $packed = & (Join-Path $PSScriptRoot "pack-browser-extension.ps1") -PrivateKeyPath $ExtensionPrivateKeyPath
+    if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "pack-browser-extension.ps1 failed." }
+}
+
 $projects = @(
     @{ Name = "Service"; Path = "src\CompanyDlp.Service\CompanyDlp.Service.csproj" },
     @{ Name = "Desktop"; Path = "src\CompanyDlp.Desktop\CompanyDlp.Desktop.csproj" },
@@ -28,16 +35,10 @@ foreach ($project in $projects) {
     if ($LASTEXITCODE -ne 0) { throw "Publish failed for $($project.Name)." }
 }
 
-if ($ExtensionPrivateKeyPath) {
-    # Pack browser-extension FIRST so the copy below picks up the version bump this run produced.
-    if (-not $ExtensionUpdateBaseUrl) { throw "-ExtensionUpdateBaseUrl is required together with -ExtensionPrivateKeyPath." }
-    $packed = & (Join-Path $PSScriptRoot "pack-browser-extension.ps1") -PrivateKeyPath $ExtensionPrivateKeyPath
-    if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "pack-browser-extension.ps1 failed." }
-}
-
 Copy-Item (Join-Path $root "browser-extension") (Join-Path $out "browser-extension") -Recurse -Force
 Copy-Item (Join-Path $root "firefox-extension") (Join-Path $out "firefox-extension") -Recurse -Force
 Copy-Item (Join-Path $root "config\policy.production.sample.json") (Join-Path $out "policy.production.sample.json") -Force
+Write-Host "Published to $out" -ForegroundColor Green
 
 if ($ExtensionPrivateKeyPath) {
     $extensionsOut = Join-Path $out "extensions"
@@ -60,5 +61,3 @@ if ($ExtensionPrivateKeyPath) {
     Write-Host "  Update URL:    $ExtensionUpdateBaseUrl/extensions/update.xml" -ForegroundColor Green
     Write-Host "  Deploy step:   copy $extensionsOut\* to wherever `$ExtensionUpdateBaseUrl serves /extensions/ (e.g. the backend's wwwroot/extensions/)." -ForegroundColor Yellow
 }
-
-Write-Host "Published to $out" -ForegroundColor Green

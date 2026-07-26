@@ -1,76 +1,90 @@
-# البدء السريع — Company DLP Windows Ready v1
+# البدء السريع — Company DLP v1.1.0
 
-## قبل التشغيل
+## المتطلبات
 
-- استخدم Windows 10/11 x64.
-- افتح PowerShell كمسؤول عند اختبار USB وسياسات الجهاز.
-- يلزم .NET SDK 8 أو أحدث.
+- Windows 10 أو 11 بنواة x64.
+- .NET 8 SDK.
+- SQL Server LocalDB للتطوير، أو SQL Server آخر.
+- Node.js 20 أو أحدث مع npm.
+- PowerShell، ويفضل فتحه كمسؤول عند اختبار خصائص Windows.
 
-## 1. التحقق من النسخة
+## 1. فحص الباك والواجهة والـAgent
 
 من داخل مجلد المشروع:
 
 ```powershell
+.\VERIFY_CENTRAL_ADMIN.bat
 .\VERIFY_WINDOWS_READY.bat
 ```
 
-يجب أن ينجح Restore وBuild وTests وفحص ملفات JSON وPowerShell وJavaScript.
+الأول يبني حل .NET ويشغل الاختبارات ويبني Angular Production Build. الثاني يشغل فحوص نسخة Windows الحالية.
 
-## 2. تشغيل بيئة الاختبار الكاملة
+## 2. تشغيل لوحة الأدمن والـAPI
+
+```powershell
+.\START_CENTRAL_ADMIN.bat
+```
+
+سيتم فتح نافذتين:
+
+- API: `http://127.0.0.1:5060`
+- Portal: `http://127.0.0.1:4200`
+
+افتح الـPortal ثم اختر **Create tenant** لإنشاء الشركة وأول حساب بدور `Owner`.
+
+بعد الدخول يمكنك:
+
+1. إنشاء حسابات Owner أو PolicyAdmin أو Auditor.
+2. إضافة الموظفين والأقسام وبيانات Windows الخاصة بهم.
+3. إنشاء Enrollment Code يستخدم مرة واحدة.
+4. ربط الجهاز بموظف.
+5. إضافة Allow أو Block دائم أو مؤقت.
+6. مراجعة أحداث الأجهزة وسجل تعديلات الأدمن.
+
+## 3. ربط نسخة Windows بالباك المركزي
+
+من صفحة Devices أنشئ Enrollment Code، ثم شغل:
+
+```powershell
+.\CONNECT_DEVELOPMENT_TO_ADMIN.bat -TenantId '<TenantId>'
+```
+
+ألصق الكود عندما يطلبه السكربت، ثم شغل:
 
 ```powershell
 .\START_DEVELOPMENT.bat
 ```
 
-السكربت يقوم بما يلي:
+عندما تكون نسخة التطوير متصلة بالـAdmin API، لن يشغل السكربت الـMock Server. سيعمل Health Check للـAPI ثم يشغل Service وDesktop.
 
-1. يعيد أي تغييرات تطوير سابقة.
-2. يبني الحل.
-3. يشغّل Mock Server المتوافق مع عقد الباك النهائي.
-4. يشغّل Service وDesktop.
-5. يسجل Right-click Encrypt/Decrypt مؤقتًا.
-6. ينظف التغييرات عند إغلاق شاشة Company DLP.
+## 4. تجربة صلاحية مؤقتة
 
-بعد فتح الشاشة اضغط **Start Test Session** لفتح Chrome/Edge بملف مستخدم مؤقت ومحمي. لا تختبر الرفع في نافذة متصفح عادية.
+من صفحة **Permissions**:
 
-## 3. إعطاء صلاحية مؤقتة
+- اختر `screen.capture`.
+- اختر `Allow`.
+- اختر Scope من نوع `Device` وحدد الجهاز.
+- فعّل الصلاحية المؤقتة وحدد وقت الانتهاء.
+- اكتب سبب الموافقة واحفظ.
 
-اترك بيئة التطوير مفتوحة وافتح PowerShell آخر:
+يرفع الباك رقم `PolicyRevision`. في أول Heartbeat يعرف الـAgent أن هناك تعديلًا، فيسحب Policy خاصة بجهازه ويطبقها. عند انتهاء الوقت تتوقف الصلاحية محليًا دون انتظار أمر جديد من الباك.
 
-```powershell
-.\SET_DEVELOPMENT_PERMISSION.bat
-```
+## 5. الأدوار
 
-اختر الـAction والمدة. تنتهي الصلاحية تلقائيًا ويُسجل حدث انتهاء الصلاحية.
+- `Owner`: كامل الصلاحيات، ويستطيع إدارة حسابات الأدمن.
+- `PolicyAdmin`: يدير الموظفين والأجهزة والصلاحيات والـPolicy ويقرأ الـAudit.
+- `Auditor`: قراءة الـAudit فقط.
 
-## 4. مشاهدة الأحداث
+لا يمكن تعطيل أو تخفيض آخر Owner. تغيير الدور أو الحالة أو كلمة المرور يبطل الجلسات القديمة مباشرة.
 
-```powershell
-.\SHOW_DEVELOPMENT_EVENTS.bat
-```
+## 6. الإيقاف والتنظيف
 
-الأحداث تمر بنفس Envelope وBatch Contract الذي سيستخدمه الباك الحقيقي. أثناء التطوير يخزن Mock Server نسخة JSONL للعرض؛ الـAgent نفسه يحتفظ بالـOutbox مشفرة بـDPAPI.
-
-## 5. الإيقاف والتنظيف
-
-أغلق شاشة Company DLP. للتنظيف اليدوي عند انقطاع مفاجئ:
+أغلق شاشة Company DLP لإيقاف بيئة تطوير الـAgent وتنظيف تغييرات المتصفح والـRegistry المؤقتة. عند حدوث إغلاق غير طبيعي شغل:
 
 ```powershell
 .\RESTORE_MY_PC.bat
 ```
 
-## مهم قبل اعتماد النسخة
+## قبل Production
 
-نجاح الاختبار النصي للحزمة لا يكفي. يجب تشغيل `VERIFY_WINDOWS_READY.bat` على Windows ثم تنفيذ المصفوفة الموجودة في:
-
-```text
-docs\WINDOWS_TEST_PLAN.md
-```
-
-النسخة الحالية تمنع كل Upload افتراضيًا. عقد AI Provider جاهز، لكن السماح بعد قرار AI يحتاج Approval Token قصير المدة مربوطًا بالملف والمستخدم والجهاز والموقع قبل تفعيله في Production.
-
-## ملاحظات v1.0.10
-
-- في وضع Development، لن يتم منع أو تسجيل أو إظهار تنبيه تثبيت البرامج قبل الضغط على **Start test session**.
-- بعد الضغط على **Stop** تتوقف مراقبة تثبيت البرامج تلقائيًا.
-- يتم تشغيل واجهة Desktop من `CompanyDlp.Desktop.exe` مباشرة لتجنب حظر تحميل الـDLL على أجهزة Application Control.
+لا تستخدم مفاتيح أو إعدادات Development. طبّق `docs\PRODUCTION_GATES.md`، واستخدم HTTPS وSQL Server Production ومفتاح ECDSA محميًا وSecret Manager وCode Signing، ثم نفذ `docs\WINDOWS_TEST_PLAN.md` على أجهزة Windows فعلية.

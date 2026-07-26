@@ -1,25 +1,45 @@
-.vs/
+﻿# Build outputs
 bin/
 obj/
-artifacts/
+.vs/
 *.user
 *.suo
-*.pfx
-*.pem
+*.log
+
+# Node / frontend outputs
+node_modules/
+dist/
+.angular/
+
+# Local development/runtime data
+.development/
+*.bak
+*.tmp
+artifacts/
 browser-extension/build/
+
+# Backup files
+*.backup
+*.old
+*.before-*
+
+# Company DLP local runtime files
+audit-*.jsonl
+policy.development.local.json
+policy.production.local.json
+
+# Secrets / credentials
+*.pfx
+*.cer
+*.key
+*.pem
+*.secret
+secrets.json
+appsettings.*.local.json
 
 # Extension signing material (private key + derived artifacts) - never commit
 signing/
 
-# Backup files
-*.bak
-*.backup
-*.old
-*.tmp
-*.temp
-*.before-*
-
-# Development runtime files
-.development/
-config/policy.development.json
-config/*.development.json
+# OS files
+.DS_Store
+Thumbs.db

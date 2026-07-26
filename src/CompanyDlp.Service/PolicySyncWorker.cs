@@ -8,17 +8,17 @@ public sealed class PolicySyncWorker(
     BackendApiClient backendApiClient,
     PolicySnapshotValidator validator,
     AuditLogger auditLogger,
+    TrustedClock trustedClock,
+    PolicyRefreshSignal refreshSignal,
     ILogger<PolicySyncWorker> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-            var policy = policyStore.Get();
-            var delay = TimeSpan.FromSeconds(Math.Clamp(policy.Backend.PolicySyncSeconds, 5, 3600));
             try
             {
-                if (policy.Backend.Enabled)
+                if (policyStore.Get().Backend.Enabled)
                     await SynchronizeOnceAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -30,7 +30,16 @@ public sealed class PolicySyncWorker(
                 logger.LogWarning(exception, "Central DLP policy synchronization failed. The last valid local/cached policy remains active.");
             }
 
-            await Task.Delay(delay, stoppingToken);
+            var policy = policyStore.Get();
+            var delay = TimeSpan.FromSeconds(Math.Clamp(policy.Backend.PolicySyncSeconds, 5, 3600));
+            try
+            {
+                await refreshSignal.WaitAsync(delay, stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
         }
     }
 
@@ -40,7 +49,7 @@ public sealed class PolicySyncWorker(
         var snapshot = await backendApiClient.GetPolicyAsync(identity, policyStore.CurrentRemoteVersion, cancellationToken);
         if (snapshot is null || snapshot.Version <= policyStore.CurrentRemoteVersion) return;
 
-        if (!validator.TryValidate(snapshot, identity, DateTimeOffset.UtcNow, out var failureReason))
+        if (!validator.TryValidate(snapshot, identity, trustedClock.GetSnapshot().UtcNow, out var failureReason))
         {
             await auditLogger.WriteAsync(new AuditEvent
             {

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using CompanyDlp.Contracts;
+using CompanyDlp.Core;
 
 namespace CompanyDlp.Service;
 
@@ -18,8 +19,8 @@ public sealed class EffectivePolicyBuilder(
         {
             effective.Screen.BlockPrintScreenHotkey = false;
             effective.Screen.BlockWindowsSnippingShortcut = false;
-            effective.Browser.DisableBrowserScreenshots = false;
             effective.Screen.MonitorKnownScreenshotToolProcesses = false;
+            effective.Browser.DisableBrowserScreenshots = false;
         }
 
         if (evaluator.Evaluate(source, ActionKeys.ScreenRecording, context, identity, nowUtc).IsAllowed)
@@ -35,9 +36,6 @@ public sealed class EffectivePolicyBuilder(
             effective.Browser.BlockSensitiveCopy = false;
         }
 
-        if (evaluator.Evaluate(source, ActionKeys.BrowserDownload, context, identity, nowUtc).IsAllowed)
-            effective.Browser.BlockDownloads = false;
-
         if (evaluator.Evaluate(source, ActionKeys.BrowserUpload, context, identity, nowUtc).IsAllowed)
             effective.Browser.BlockFileUpload = false;
 
@@ -49,6 +47,9 @@ public sealed class EffectivePolicyBuilder(
 
         if (evaluator.Evaluate(source, ActionKeys.BrowserImagePaste, context, identity, nowUtc).IsAllowed)
             effective.Browser.BlockImagePaste = false;
+
+        if (evaluator.Evaluate(source, ActionKeys.BrowserDownload, context, identity, nowUtc).IsAllowed)
+            effective.Browser.BlockDownloads = false;
 
         return effective;
     }

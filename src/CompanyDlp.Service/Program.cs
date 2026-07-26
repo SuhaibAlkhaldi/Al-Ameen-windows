@@ -32,6 +32,7 @@ builder.Services.AddSingleton<AuditOutbox>();
 builder.Services.AddSingleton<AuditLogger>();
 builder.Services.AddSingleton<BackendApiClient>();
 builder.Services.AddSingleton<PolicySnapshotValidator>();
+builder.Services.AddSingleton<PolicyRefreshSignal>();
 builder.Services.AddSingleton<IFileKeyProtector, FileKeyProtector>();
 builder.Services.AddSingleton<FileProtectionEngine>();
 builder.Services.AddSingleton<FileProtectionCoordinator>();

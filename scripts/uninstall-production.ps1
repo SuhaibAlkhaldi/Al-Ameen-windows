@@ -10,14 +10,18 @@ Remove-Item "HKLM:\SOFTWARE\Google\Chrome\NativeMessagingHosts\com.company.dlp" 
 Remove-Item "HKLM:\SOFTWARE\Microsoft\Edge\NativeMessagingHosts\com.company.dlp" -Recurse -Force -ErrorAction SilentlyContinue
 
 
-# Value name must match what register-browser-force-install.ps1 actually creates (a numeric list
-# index - Chrome/Edge require this to recognize the registry value as a list entry at all).
-$browserExtensionValueName = "1"
+# Two independent mechanisms can write these list policies with different value names:
+# register-browser-force-install.ps1 (a numeric list index, "1") and BrowserPolicyManager.cs's
+# runtime-applied policy (fixed literal "9999"). Clean up both regardless of which one actually ran.
 foreach ($item in @(
-    @{ Path = "HKLM:\SOFTWARE\Policies\Google\Chrome\ExtensionInstallForcelist"; Name = $browserExtensionValueName },
-    @{ Path = "HKLM:\SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallForcelist"; Name = $browserExtensionValueName },
-    @{ Path = "HKLM:\SOFTWARE\Policies\Google\Chrome\ExtensionInstallBlocklist"; Name = $browserExtensionValueName },
-    @{ Path = "HKLM:\SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallBlocklist"; Name = $browserExtensionValueName }
+    @{ Path = "HKLM:\SOFTWARE\Policies\Google\Chrome\ExtensionInstallForcelist"; Name = "1" },
+    @{ Path = "HKLM:\SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallForcelist"; Name = "1" },
+    @{ Path = "HKLM:\SOFTWARE\Policies\Google\Chrome\ExtensionInstallBlocklist"; Name = "1" },
+    @{ Path = "HKLM:\SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallBlocklist"; Name = "1" },
+    @{ Path = "HKLM:\SOFTWARE\Policies\Google\Chrome\ExtensionInstallForcelist"; Name = "9999" },
+    @{ Path = "HKLM:\SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallForcelist"; Name = "9999" },
+    @{ Path = "HKLM:\SOFTWARE\Policies\Google\Chrome\ExtensionInstallBlocklist"; Name = "9999" },
+    @{ Path = "HKLM:\SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallBlocklist"; Name = "9999" }
 )) {
     Remove-ItemProperty $item.Path -Name $item.Name -Force -ErrorAction SilentlyContinue
 }
