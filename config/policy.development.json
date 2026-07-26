@@ -37,7 +37,7 @@
                 },
     "usb":  {
                 "enabled":  true,
-                "enforcementMode":  "Block",
+                "enforcementMode":  "AuditOnly",
                 "allowAnyKeyboardOrMouse":  true,
                 "trustDevicesPresentAtFirstRun":  false,
                 "pollSeconds":  2,
@@ -65,20 +65,20 @@
                    "recorderPollMilliseconds":  250,
                    "recorderEnforcementMode":  "Block",
                    "blockedRecorderProcessNames":  [
-                                               "obs64",
-                                               "obs32",
-                                               "ShareX",
-                                               "GameBar",
-                                               "CamtasiaRecorder",
-                                               "CamtasiaStudio",
-                                               "Bandicam",
-                                               "ScreenRecorder",
-                                               "Loom"
-                                           ],
+                                                       "obs64",
+                                                       "obs32",
+                                                       "ShareX",
+                                                       "GameBar",
+                                                       "CamtasiaRecorder",
+                                                       "CamtasiaStudio",
+                                                       "Bandicam",
+                                                       "ScreenRecorder",
+                                                       "Loom"
+                                                   ],
                    "blockedScreenshotToolProcessNames":  [
-                                               "SnippingTool",
-                                               "ScreenClippingHost"
-                                           ]
+                                                             "SnippingTool",
+                                                             "ScreenClippingHost"
+                                                         ]
                },
     "watermark":  {
                       "enabled":  true,
@@ -596,6 +596,22 @@
                                            "grantedBy":  "DevelopmentTestScript",
                                            "createdAtUtc":  "2026-07-12T10:26:04.2084344+00:00",
                                            "revokedBy":  ""
+                                       },
+                                       {
+                                           "grantId":  "978051a9-0a27-40d4-8458-69e15ad794a8",
+                                           "actionKey":  "usb.storage",
+                                           "allowed":  true,
+                                           "subjectType":  "UserSid",
+                                           "subjectId":  "S-1-5-21-42561475-3606621606-2568464258-1001",
+                                           "source":  "PermanentPolicy",
+                                           "priority":  500,
+                                           "startsAtUtc":  "2026-07-26T12:53:23.0193466+00:00",
+                                           "expiresAtUtc":  null,
+                                           "reason":  "live-verification-permanent",
+                                           "grantedBy":  "PerKeyVerificationScript",
+                                           "createdAtUtc":  "2026-07-26T12:53:23.0193466+00:00",
+                                           "revokedAtUtc":  "2026-07-26T12:56:37.7886386+00:00",
+                                           "revokedBy":  "PerKeyVerificationScript"
                                        }
                                    ]
                     },
