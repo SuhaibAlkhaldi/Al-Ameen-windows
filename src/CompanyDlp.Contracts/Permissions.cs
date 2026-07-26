@@ -41,12 +41,25 @@ public sealed class PermissionGrant
     public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? RevokedAtUtc { get; set; }
     public string RevokedBy { get; set; } = "";
+
+    // Both null = ordinary action-level grant (unchanged behavior). FileHash set = grant covers
+    // exactly one file (SHA-256, lowercase hex). ClassificationTier set (FileHash null) = grant
+    // covers any file whose cached classification rank is <= this tier's rank (see
+    // ClassificationTiers.RankOf). The two are mutually exclusive - a request is either scoped to
+    // one exact file or to a tier, never both.
+    public string? FileHash { get; set; }
+    public string? ClassificationTier { get; set; }
 }
 
 public sealed class PermissionEvaluationRequest
 {
     public string ActionKey { get; set; } = "";
     public ClientContext Context { get; set; } = new();
+
+    // Set by the browser extension for browser.upload/browser.drag-drop checks so the evaluator
+    // can match FileHash/ClassificationTier-scoped grants, not just action-level ones. Left null
+    // for every other action key.
+    public string? FileHash { get; set; }
 }
 
 public sealed class PermissionDecision
@@ -57,4 +70,11 @@ public sealed class PermissionDecision
     public Guid? PermissionGrantId { get; set; }
     public DateTimeOffset? PermissionExpiresAtUtc { get; set; }
     public string PermissionSource { get; set; } = PermissionSources.GlobalDefault;
+
+    // Populated by PipeServer when the request carried a FileHash, from the local
+    // FileClassificationCache - lets the browser extension show/report the file's actual
+    // classification on a blocked attempt without a second round trip. Null when no fileHash was
+    // given, or when that hash has no cached classification yet.
+    public string? FileClassification { get; set; }
+    public string? FileClassificationReasonCode { get; set; }
 }

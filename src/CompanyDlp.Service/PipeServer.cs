@@ -9,6 +9,7 @@ using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using CompanyDlp.Contracts;
+using CompanyDlp.Core;
 
 namespace CompanyDlp.Service;
 
@@ -19,6 +20,7 @@ public sealed class PipeServer(
     PermissionEvaluator permissionEvaluator,
     ContentClassifier classifier,
     FileClassificationService fileClassificationService,
+    FileClassificationCache fileClassificationCache,
     AuditLogger auditLogger,
     AuditOutbox auditOutbox,
     FileProtectionCoordinator fileProtectionCoordinator,
@@ -223,7 +225,16 @@ public sealed class PipeServer(
                     input.ActionKey,
                     request.Context,
                     identityProvider.Get(),
-                    DateTimeOffset.UtcNow);
+                    DateTimeOffset.UtcNow,
+                    input.FileHash);
+
+                if (!string.IsNullOrWhiteSpace(input.FileHash))
+                {
+                    var cached = fileClassificationCache.TryGet(input.FileHash);
+                    decision.FileClassification = cached?.Classification;
+                    decision.FileClassificationReasonCode = cached?.ReasonCode;
+                }
+
                 return DlpResponse.Ok(data: decision);
             }
             case DlpMessageTypes.ClassifyText:

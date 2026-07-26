@@ -47,6 +47,12 @@ public sealed class AuditEvent
     public string ResourceExtension { get; set; } = "";
     public long? ResourceSizeBytes { get; set; }
     public string ResourceSha256 { get; set; } = "";
+
+    // Set for browser.upload/browser.drag-drop blocked-attempt events so the backend can populate a
+    // permission request's file details from this event alone (via CorrelationId) without ever
+    // needing the file content itself. One of ClassificationTiers.* or "" if not yet classified.
+    public string ResourceClassification { get; set; } = "";
+    public string ResourceClassificationReasonCode { get; set; } = "";
     public string UserSid { get; set; } = "";
     public int WindowsSessionId { get; set; }
     public Guid? PermissionGrantId { get; set; }

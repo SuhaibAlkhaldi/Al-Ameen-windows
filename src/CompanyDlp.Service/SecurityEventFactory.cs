@@ -101,7 +101,9 @@ public sealed class SecurityEventFactory(
             Name = Sanitize(Path.GetFileName(audit.ResourceName), 500),
             Extension = Sanitize(audit.ResourceExtension, 30),
             SizeBytes = audit.ResourceSizeBytes,
-            Sha256 = NormalizeSha256(audit.ResourceSha256)
+            Sha256 = NormalizeSha256(audit.ResourceSha256),
+            Classification = Sanitize(audit.ResourceClassification, 20),
+            ClassificationReasonCode = Sanitize(audit.ResourceClassificationReasonCode, 500)
         };
     }
 

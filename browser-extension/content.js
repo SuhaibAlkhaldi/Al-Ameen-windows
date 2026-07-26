@@ -147,7 +147,7 @@
     return null;
   }
 
-  function audit(action, result, rule, details = "", resource = null) {
+  function audit(action, result, rule, details = "", resource = null, extra = {}) {
     const now = Date.now();
     const duplicateWindowMs = Math.max(1, Number(policy?.notifications?.duplicateWindowSeconds || 3)) * 1000;
     const key = `${action}|${result}|${rule?.id || ""}|${details}|${location.origin}`;
@@ -170,12 +170,17 @@
         reasonCode: "DeniedByBrowserPolicy",
         resourceName: resource?.name || "",
         resourceExtension: resource?.extension || "",
-        resourceSizeBytes: Number.isFinite(resource?.size) ? resource.size : null
+        resourceSizeBytes: Number.isFinite(resource?.size) ? resource.size : null,
+        resourceSha256: resource?.sha256 || "",
+        resourceClassification: resource?.classification || "",
+        resourceClassificationReasonCode: resource?.classificationReasonCode || "",
+        actionKey: extra.actionKey || "",
+        correlationId: extra.correlationId || ""
       });
     } catch (_) { }
   }
 
-  function notify(title, message, severity = "error") {
+  function notify(title, message, severity = "error", link = null) {
     if (policy?.notifications?.enabled === false || policy?.notifications?.showBrowserPageAlerts === false) return;
 
     const now = Date.now();
@@ -205,11 +210,25 @@
     Object.assign(footer.style, { font: "500 11px Arial,sans-serif", opacity: ".82", marginTop: "8px" });
 
     notice.append(heading, body, footer);
+
+    if (link) {
+      const action = document.createElement("a");
+      action.textContent = link.label;
+      action.href = link.url;
+      action.target = "_blank";
+      action.rel = "noopener noreferrer";
+      Object.assign(action.style, {
+        display: "inline-block", marginTop: "10px", font: "700 13px Arial,sans-serif",
+        color: "white", textDecoration: "underline", pointerEvents: "auto", cursor: "pointer"
+      });
+      notice.appendChild(action);
+    }
+
     Object.assign(notice.style, {
       position: "fixed", zIndex: "2147483647", top: "18px", right: "18px", width: "min(430px, calc(100vw - 36px))",
       boxSizing: "border-box", background: severity === "warning" ? "#b45309" : "#b91c1c", color: "white",
       padding: "16px 18px", border: "1px solid rgba(255,255,255,.55)", borderRadius: "12px",
-      boxShadow: "0 16px 40px rgba(0,0,0,.45)", pointerEvents: "none",
+      boxShadow: "0 16px 40px rgba(0,0,0,.45)", pointerEvents: link ? "auto" : "none",
       transform: "translateY(-12px)", opacity: "0", transition: "transform .18s ease, opacity .18s ease"
     });
     (document.documentElement || document.body).appendChild(notice);
@@ -253,6 +272,9 @@
     "xhr-file-upload": ["File upload blocked", "A page script attempted to upload a file using XMLHttpRequest."],
     "fetch-file-upload": ["File upload blocked", "A page script attempted to upload a file using fetch."],
     "beacon-file-upload": ["File upload blocked", "A page script attempted to send a file in the background."],
+    "websocket-file-upload": ["File upload blocked", "A page script attempted to send a file over a WebSocket connection."],
+    "worker-file-transfer": ["File upload blocked", "A page script attempted to hand a file to a background worker for upload."],
+    "rtc-file-upload": ["File upload blocked", "A page script attempted to send a file over a peer-to-peer connection."],
     "web-share-file": ["File sharing blocked", "Sharing files from this browser is not allowed."],
     "paste-file": ["File paste blocked", "Pasting files into browser pages is not allowed."],
     "paste-image": ["Image paste blocked", "Pasting images into browser pages is not allowed."],
@@ -265,8 +287,25 @@
     return "file-upload";
   }
 
-  function reportBrowserBlock(action, details = "", notifyUser = true, resource = null) {
+  // Only these three actions are the real, new transmission-time enforcement point for
+  // browser.upload/browser.drag-drop (see page-guard.js) - they're the ones eligible for the
+  // "Request Permission" deep link, since only they carry a real file hash from an actual send
+  // attempt. Every other blocked action here (pickers, share, paste, screen capture) is unrelated to
+  // file classification and just gets the plain notice it always has.
+  const FILE_TRANSMISSION_ACTIONS = new Set(["fetch-file-upload", "xhr-file-upload", "form-file-submit", "worker-file-transfer", "file-input-change", "file-drop"]);
+
+  function buildRequestPermissionLink(actionKey, correlationId) {
+    const portalBaseUrl = policy?.fileClassification?.portalBaseUrl;
+    if (!portalBaseUrl || !actionKey || !correlationId) return null;
+    const url = `${String(portalBaseUrl).replace(/\/$/, "")}/permission-requests/new`
+      + `?actionKey=${encodeURIComponent(actionKey)}&fromEvent=${encodeURIComponent(correlationId)}`;
+    return { label: "Request Permission", url };
+  }
+
+  function reportBrowserBlock(action, details = "", notifyUser = true, resource = null, actionKey = null) {
     const now = Date.now();
+    const isFileTransmission = FILE_TRANSMISSION_ACTIONS.has(action);
+    const correlationId = isFileTransmission ? crypto.randomUUID() : "";
 
     // Background page preparation can construct File/FormData objects without a user upload.
     // Keep the block in place, but suppress page alerts and heavily deduplicate silent audit events.
@@ -278,7 +317,7 @@
       for (const [oldKey, timestamp] of recentSilentBrowserBlocks) {
         if (timestamp < now - silentWindowMs * 3) recentSilentBrowserBlocks.delete(oldKey);
       }
-      audit(action, "blocked", null, details ? `silent-background:${details}` : "silent-background", resource);
+      audit(action, "blocked", null, details ? `silent-background:${details}` : "silent-background", resource, { actionKey, correlationId });
       return;
     }
 
@@ -290,9 +329,13 @@
       if (timestamp < now - duplicateWindowMs * 4) recentBrowserBlocks.delete(oldGroup);
     }
 
-    const [title, message] = browserBlockMessages[action] || ["Browser action blocked", "This action is not allowed by company security policy."];
-    notify(title, message);
-    audit(action, "blocked", null, details, resource);
+    const [title, baseMessage] = browserBlockMessages[action] || ["Browser action blocked", "This action is not allowed by company security policy."];
+    const message = isFileTransmission && resource?.classification
+      ? `${baseMessage} File classification: ${resource.classification}.`
+      : baseMessage;
+    const link = isFileTransmission ? buildRequestPermissionLink(actionKey, correlationId) : null;
+    notify(title, message, "error", link);
+    audit(action, "blocked", null, details, resource, { actionKey, correlationId });
   }
 
   document.addEventListener("company-dlp-page-block", (event) => {
@@ -301,7 +344,31 @@
     const details = String(event?.detail?.details || root?.dataset.companyDlpLastBlockDetails || "");
     const notifyUser = event?.detail?.notifyUser !== false
       && root?.dataset.companyDlpLastBlockNotify !== "false";
-    reportBrowserBlock(action, details, notifyUser, event?.detail?.resource || null);
+    reportBrowserBlock(action, details, notifyUser, event?.detail?.resource || null, event?.detail?.actionKey || null);
+  }, true);
+
+  // Bridges page-guard.js's main-world "is this file allowed to be sent" request to the extension's
+  // native-messaging channel, which is only reachable from this isolated-world content script.
+  document.addEventListener("company-dlp-evaluate-file-request", (event) => {
+    const { requestId, actionKey, fileHash } = event?.detail || {};
+    if (!requestId) return;
+    try {
+      chrome.runtime.sendMessage({ type: "evaluateFileUpload", actionKey, fileHash }, (response) => {
+        document.dispatchEvent(new CustomEvent("company-dlp-evaluate-file-response", {
+          detail: {
+            requestId,
+            allowed: response?.allowed === true,
+            reasonCode: response?.reasonCode || "",
+            fileClassification: response?.fileClassification || "",
+            fileClassificationReasonCode: response?.fileClassificationReasonCode || ""
+          }
+        }));
+      });
+    } catch (_) {
+      document.dispatchEvent(new CustomEvent("company-dlp-evaluate-file-response", {
+        detail: { requestId, allowed: false, reasonCode: "ExtensionBridgeUnavailable" }
+      }));
+    }
   }, true);
 
   function stop(event) {
@@ -328,16 +395,10 @@
     return null;
   }
 
-  document.addEventListener("change", (event) => {
-    if (policy?.browser?.blockFileUpload === false) return;
-    const input = event.target;
-    if (!(input instanceof HTMLInputElement) || input.type !== "file" || !input.files?.length) return;
-    const count = input.files.length;
-    const resource = summarizeFile(input.files[0]);
-    try { input.value = ""; } catch (_) { }
-    stop(event);
-    reportBrowserBlock("file-input-change", `${count} file(s)`, true, resource);
-  }, true);
+  // File selection itself is no longer blocked here - enforcement moved to the actual transmission
+  // point (fetch/XHR/form-submit, intercepted in the isolated main-world page-guard.js, which is the
+  // only place that can see those page-JS-level calls). This isolated-world listener now only needs
+  // to stay out of the way; see the evaluate-file request/response bridge below for the real check.
 
   function summarizeFile(file) {
     if (!file) return null;
@@ -351,27 +412,9 @@
     };
   }
 
-  function containsDraggedFiles(event) {
-    try {
-      if (event.dataTransfer?.files?.length) return true;
-      if (Array.from(event.dataTransfer?.items || []).some((item) => item.kind === "file")) return true;
-      return Array.from(event.dataTransfer?.types || []).includes("Files");
-    } catch (_) {
-      return false;
-    }
-  }
-
-  for (const eventName of ["dragenter", "dragover", "drop"]) {
-    const handler = (event) => {
-      if (policy?.browser?.blockDragAndDrop === false || !containsDraggedFiles(event)) return;
-      stop(event);
-      if (eventName === "drop") {
-        const files = Array.from(event.dataTransfer?.files || []);
-        reportBrowserBlock("file-drop", `${files.length} file(s)`, true, summarizeFile(files[0]));
-      }
-    };
-    window.addEventListener(eventName, handler, { capture: true, passive: false });
-  }
+  // Drag/drop is no longer blocked here either - same reasoning as the change listener above. The
+  // drop gesture itself is allowed through; page-guard.js tags the resulting Files with their
+  // browser.drag-drop origin so the transmission-time check applies the right permission to them.
 
   document.addEventListener("copy", (event) => {
     if (policy?.browser?.blockSensitiveCopy === false) return;
@@ -445,16 +488,8 @@
     audit("input-sensitive", "blocked", rule);
   }, true);
 
-  document.addEventListener("formdata", (event) => {
-    if (policy?.browser?.blockFileUpload === false) return;
-    try {
-      for (const [key, value] of event.formData.entries()) {
-        if (value instanceof File) event.formData.delete(key);
-      }
-    } catch (_) { }
-    // Do not alert merely because a site prepared FormData in the background.
-    // Picker, drop, paste, change and real user-triggered send paths create the visible alert.
-  }, true);
+  // Files are no longer stripped from FormData here - the transmission-time check (page-guard.js's
+  // fetch/XHR/form-submit overrides) is the real enforcement point now.
 
   document.addEventListener("submit", (event) => {
     if (policy?.browser?.blockSensitiveInputAndSubmit === false) return;

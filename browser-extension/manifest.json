@@ -46,7 +46,8 @@
                             }
                         ],
     "action":  {
-                   "default_title":  "Company DLP is managed by your organization"
+                   "default_title":  "Company DLP is managed by your organization",
+                   "default_popup":  "popup.html"
                },
     "storage":  {
                     "managed_schema":  "managed-storage-schema.json"

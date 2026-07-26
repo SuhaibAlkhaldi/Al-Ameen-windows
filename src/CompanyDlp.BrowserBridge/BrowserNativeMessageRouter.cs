@@ -46,6 +46,21 @@ public static class BrowserNativeMessageRouter
             }, cancellationToken);
         }
 
+        // Used at the fetch/XHR/form-submit transmission point for browser.upload/browser.drag-drop:
+        // a fast local cache+grant lookup (PermissionEvaluator.Evaluate with fileHash), never a live
+        // AI classification call - the background scanner (FileInventoryScanner) is the only thing
+        // that ever triggers that. An uncached fileHash fails closed to the most sensitive tier.
+        if (type.Equals("evaluatePermission", StringComparison.OrdinalIgnoreCase))
+        {
+            return await SendPipeAsync(DlpMessageTypes.EvaluatePermission, new PermissionEvaluationRequest
+            {
+                ActionKey = ReadString(message, "actionKey", ""),
+                FileHash = message.TryGetProperty("fileHash", out var fileHashElement) && fileHashElement.ValueKind == JsonValueKind.String
+                    ? fileHashElement.GetString()
+                    : null
+            }, cancellationToken);
+        }
+
         if (type.Equals("classifyFile", StringComparison.OrdinalIgnoreCase))
         {
             return await SendPipeAsync(DlpMessageTypes.ClassifyFile, new FileClassificationRequest
@@ -64,8 +79,14 @@ public static class BrowserNativeMessageRouter
         {
             var sourceProcessId = sourceProcessIdOverride ?? GetParentProcessId();
             var sourceProcessName = sourceProcessNameOverride ?? GetProcessName(sourceProcessId);
-            return await SendPipeAsync(DlpMessageTypes.Audit, new AuditEvent
+            var correlationIdText = ReadString(message, "correlationId", "");
+            var auditEvent = new AuditEvent
             {
+                // Explicit, when the caller knows it precisely (e.g. content.js now tracks
+                // browser.upload vs browser.drag-drop per file) - falls back to
+                // SecurityEventFactory.ResolveActionKey's EventType/Action heuristic when empty,
+                // unchanged for every other existing call site.
+                ActionKey = ReadString(message, "actionKey", ""),
                 EventType = ReadString(message, "eventType", "browser"),
                 Action = ReadString(message, "action", "unknown"),
                 Method = ReadString(message, "method", ReadString(message, "action", "unknown")),
@@ -77,9 +98,23 @@ public static class BrowserNativeMessageRouter
                 ResourceName = ReadString(message, "resourceName", ""),
                 ResourceExtension = ReadString(message, "resourceExtension", ""),
                 ResourceSizeBytes = ReadInt64(message, "resourceSizeBytes"),
+                // File-classification-gated browser.upload/browser.drag-drop blocks carry the file's
+                // hash and its cached classification so the portal's exact-file request path
+                // (?fromEvent=<correlationId>) can show/derive them server-side without a second
+                // round trip. Empty for every other audit event.
+                ResourceSha256 = ReadString(message, "resourceSha256", ""),
+                ResourceClassification = ReadString(message, "resourceClassification", ""),
+                ResourceClassificationReasonCode = ReadString(message, "resourceClassificationReasonCode", ""),
                 SourceProcessName = sourceProcessName,
                 SourceProcessId = sourceProcessId
-            }, cancellationToken);
+            };
+
+            if (Guid.TryParse(correlationIdText, out var correlationId))
+            {
+                auditEvent.CorrelationId = correlationId;
+            }
+
+            return await SendPipeAsync(DlpMessageTypes.Audit, auditEvent, cancellationToken);
         }
 
         return new { success = false, message = $"Unknown native message type: {type}" };

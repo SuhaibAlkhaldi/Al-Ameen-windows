@@ -27,6 +27,8 @@ builder.Services.AddSingleton<ContentClassifier>();
 builder.Services.AddSingleton<BlockAllFileClassificationProvider>();
 builder.Services.AddSingleton<AiApiFileClassificationProvider>();
 builder.Services.AddSingleton<FileClassificationService>();
+builder.Services.AddSingleton<FileClassificationCache>();
+builder.Services.AddSingleton<FileInventoryScanner>();
 builder.Services.AddSingleton<SecurityEventFactory>();
 builder.Services.AddSingleton<AuditOutbox>();
 builder.Services.AddSingleton<AuditLogger>();

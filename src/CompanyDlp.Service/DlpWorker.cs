@@ -10,6 +10,7 @@ public sealed class DlpWorker(
     WindowsAppControlAuditMonitor windowsAppControlAuditMonitor,
     PermissionLifecycleMonitor permissionLifecycleMonitor,
     SessionAgentSupervisor sessionAgentSupervisor,
+    FileInventoryScanner fileInventoryScanner,
     ILogger<DlpWorker> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -21,6 +22,7 @@ public sealed class DlpWorker(
         var lastPolicyApply = DateTimeOffset.MinValue;
         var lastUsbScan = DateTimeOffset.MinValue;
         var initialUsbScan = true;
+        var lastFileInventoryScan = DateTimeOffset.MinValue;
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -40,6 +42,12 @@ public sealed class DlpWorker(
                 await windowsAppControlAuditMonitor.TickAsync(stoppingToken);
                 await permissionLifecycleMonitor.TickAsync(stoppingToken);
                 await sessionAgentSupervisor.TickAsync(stoppingToken);
+
+                if (now - lastFileInventoryScan >= TimeSpan.FromSeconds(Math.Max(5, policy.FileClassification.ScanIntervalSeconds)))
+                {
+                    await fileInventoryScanner.TickAsync(policy, stoppingToken);
+                    lastFileInventoryScan = now;
+                }
 
                 if (policy.Runtime.Mode.Equals("Production", StringComparison.OrdinalIgnoreCase)
                     && policy.Runtime.PersistentProtection

@@ -2,14 +2,15 @@ using CompanyDlp.Contracts;
 
 namespace CompanyDlp.Core;
 
-public sealed class PermissionEvaluator(ITrustedClock? trustedClock = null)
+public sealed class PermissionEvaluator(FileClassificationCache? classificationCache = null, ITrustedClock? trustedClock = null)
 {
     public PermissionDecision Evaluate(
         DlpPolicy policy,
         string actionKey,
         ClientContext context,
         AgentIdentity identity,
-        DateTimeOffset nowUtc)
+        DateTimeOffset nowUtc,
+        string? fileHash = null)
     {
         ArgumentNullException.ThrowIfNull(policy);
         ArgumentException.ThrowIfNullOrWhiteSpace(actionKey);
@@ -17,11 +18,20 @@ public sealed class PermissionEvaluator(ITrustedClock? trustedClock = null)
         var clock = trustedClock?.GetSnapshot();
         var evaluationTimeUtc = clock?.UtcNow ?? nowUtc;
 
+        // A file/tier-scoped grant only ever matters when this evaluation is actually about a
+        // specific file; a cache miss for a known fileHash is treated as the most sensitive tier
+        // (fail-closed) rather than "no classification restriction".
+        var fileRank = fileHash is null
+            ? (int?)null
+            : ClassificationTiers.RankOf(classificationCache?.TryGet(fileHash)?.Classification ?? ClassificationTiers.VerySecret);
+
         var candidates = policy.Permissions.Grants
             .Where(grant => grant.ActionKey.Equals(actionKey, StringComparison.OrdinalIgnoreCase))
             .Where(grant => MatchesSubject(grant, context, identity))
             .Where(grant => IsActive(grant, evaluationTimeUtc))
+            .Where(grant => MatchesFileScope(grant, fileHash, fileRank))
             .OrderByDescending(grant => IsEmergencyDeny(grant))
+            .ThenByDescending(grant => FileScopeSpecificity(grant, fileHash))
             .ThenByDescending(grant => grant.Priority)
             .ThenByDescending(grant => SubjectSpecificity(grant.SubjectType))
             .ThenByDescending(grant => grant.CreatedAtUtc)
@@ -60,6 +70,21 @@ public sealed class PermissionEvaluator(ITrustedClock? trustedClock = null)
             };
         }
 
+        // Public files never need a grant at all - but only once no grant (including an
+        // EmergencyDeny or an explicit deny for this exact file/tier) already decided the case
+        // above. An explicit administrative decision always outranks this generic, content-aware
+        // default; this only fills in when nothing more specific applies.
+        if (fileHash is not null && fileRank == ClassificationTiers.RankOf(ClassificationTiers.Public))
+        {
+            return new PermissionDecision
+            {
+                ActionKey = actionKey,
+                IsAllowed = true,
+                ReasonCode = "PublicClassification",
+                PermissionSource = PermissionSources.GlobalDefault
+            };
+        }
+
         var allowed = policy.Permissions.DefaultPermissions.TryGetValue(actionKey, out var configured)
             && configured;
 
@@ -78,6 +103,33 @@ public sealed class PermissionEvaluator(ITrustedClock? trustedClock = null)
         if (grant.StartsAtUtc > nowUtc) return false;
         if (grant.ExpiresAtUtc is not null && grant.ExpiresAtUtc <= nowUtc) return false;
         return true;
+    }
+
+    // Action-level grant (no FileHash/ClassificationTier) always matches, regardless of whether
+    // this evaluation is about a specific file - this is the existing, unchanged behavior for
+    // every action key other than browser.upload/browser.drag-drop, and remains the broadest
+    // fallback grant type for those two as well. A file/tier-scoped grant only ever applies when
+    // this evaluation is actually about a specific file (fileHash provided) - it must never leak
+    // into evaluating some unrelated action or a different file.
+    private static bool MatchesFileScope(PermissionGrant grant, string? fileHash, int? fileRank)
+    {
+        if (grant.FileHash is null && grant.ClassificationTier is null) return true;
+        if (fileHash is null) return false;
+
+        if (grant.FileHash is not null)
+            return grant.FileHash.Equals(fileHash, StringComparison.OrdinalIgnoreCase);
+
+        // ClassificationTier-scoped: covers this file if the file's own rank is at or below the
+        // granted tier's rank (a "Secret" grant also covers Public/Internal files, not the reverse).
+        return fileRank is not null && fileRank.Value <= ClassificationTiers.RankOf(grant.ClassificationTier!);
+    }
+
+    private static int FileScopeSpecificity(PermissionGrant grant, string? fileHash)
+    {
+        if (fileHash is null) return 0;
+        if (grant.FileHash is not null) return 2;
+        if (grant.ClassificationTier is not null) return 1;
+        return 0;
     }
 
     private static bool IsEmergencyDeny(PermissionGrant grant) =>

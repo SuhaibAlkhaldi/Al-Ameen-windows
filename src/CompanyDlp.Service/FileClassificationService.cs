@@ -7,6 +7,7 @@ public interface IFileClassificationProvider
     string Name { get; }
     Task<FileClassificationResult> ClassifyAsync(
         FileClassificationRequest request,
+        Stream? fileContent,
         CancellationToken cancellationToken);
 }
 
@@ -16,6 +17,7 @@ public sealed class BlockAllFileClassificationProvider : IFileClassificationProv
 
     public Task<FileClassificationResult> ClassifyAsync(
         FileClassificationRequest request,
+        Stream? fileContent,
         CancellationToken cancellationToken) =>
         Task.FromResult(new FileClassificationResult
         {
@@ -33,10 +35,25 @@ public sealed class AiApiFileClassificationProvider(BackendApiClient backendApiC
 {
     public string Name => FileClassificationProviders.AiApi;
 
+    // Real, content-based classification needs the file's actual bytes - without them there is
+    // nothing to send the AI API, so this fails closed immediately rather than guessing from
+    // metadata alone (which is exactly the gap BlockAll already covers for that case).
     public Task<FileClassificationResult> ClassifyAsync(
         FileClassificationRequest request,
+        Stream? fileContent,
         CancellationToken cancellationToken) =>
-        backendApiClient.ClassifyFileAsync(request, cancellationToken);
+        fileContent is null
+            ? Task.FromResult(new FileClassificationResult
+            {
+                RequestId = request.RequestId,
+                IsAllowed = false,
+                IsSensitive = true,
+                Classification = "ProviderUnavailable",
+                ReasonCode = "NoFileContentAvailableForAiClassification",
+                Provider = Name,
+                EvaluatedAtUtc = DateTimeOffset.UtcNow
+            })
+            : backendApiClient.ClassifyFileAsync(request, fileContent, cancellationToken);
 }
 
 public sealed class FileClassificationService(
@@ -49,7 +66,8 @@ public sealed class FileClassificationService(
     public async Task<FileClassificationResult> ClassifyAsync(
         FileClassificationRequest request,
         ClientContext context,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Stream? fileContent = null)
     {
         var policy = policyStore.Get().FileClassification;
         var identity = identityProvider.Get();
@@ -94,7 +112,7 @@ public sealed class FileClassificationService(
 
         try
         {
-            return await provider.ClassifyAsync(request, cancellationToken);
+            return await provider.ClassifyAsync(request, fileContent, cancellationToken);
         }
         catch (OperationCanceledException exception) when (policy.FailClosed && !cancellationToken.IsCancellationRequested)
         {

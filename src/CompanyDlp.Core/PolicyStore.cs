@@ -29,10 +29,31 @@ public sealed class PolicyStore(
         lock (_sync) return _policy;
     }
 
+    // AgentDlpPolicyDto (backend) only carries PolicyVersion/Enabled/Runtime/Backend/Permissions/
+    // SensitiveRules - every other DlpPolicy section is agent-local configuration the backend's
+    // schema doesn't model at all. Deserializing a remote snapshot built from that DTO leaves all of
+    // these at bare C# defaults, silently discarding whatever the local policy file actually said
+    // (this is how a local edit to, say, Notifications.ShowBrowserPageAlerts or
+    // FileClassification.Provider could keep reverting on its own). Both Reload() and
+    // ApplyRemoteSnapshot() must restore this whole set from whatever's already locally active.
+    private static void PreserveLocalOnlySections(DlpPolicy target, DlpPolicy localSource)
+    {
+        target.Clipboard = localSource.Clipboard;
+        target.Browser = localSource.Browser;
+        target.Usb = localSource.Usb;
+        target.Screen = localSource.Screen;
+        target.Watermark = localSource.Watermark;
+        target.Notifications = localSource.Notifications;
+        target.Software = localSource.Software;
+        target.FileProtection = localSource.FileProtection;
+        target.FileClassification = localSource.FileClassification;
+    }
+
     public DlpPolicy Reload()
     {
         lock (_sync)
         {
+            DlpPolicy? localPolicy = null;
             try
             {
                 if (!File.Exists(PolicyPath))
@@ -49,7 +70,9 @@ public sealed class PolicyStore(
                     logger.LogInformation("Loaded local policy {PolicyVersion} from {PolicyPath}", _policy.PolicyVersion, PolicyPath);
                 }
 
+                localPolicy = _policy;
                 TryLoadProtectedRemoteCache();
+                PreserveLocalOnlySections(_policy, localPolicy);
             }
             catch (Exception exception)
             {
@@ -87,6 +110,9 @@ public sealed class PolicyStore(
                 var temporary = cachePath + ".tmp";
                 File.WriteAllBytes(temporary, encrypted);
                 File.Move(temporary, cachePath, true);
+                // Same reasoning as Reload(): the backend doesn't model these sections at all, so
+                // keep whatever is already active locally instead of letting them revert to defaults.
+                PreserveLocalOnlySections(snapshot.Policy, _policy);
                 _policy = snapshot.Policy;
                 _currentRemoteVersion = snapshot.Version;
                 _currentRemotePolicyId = snapshot.PolicyId;

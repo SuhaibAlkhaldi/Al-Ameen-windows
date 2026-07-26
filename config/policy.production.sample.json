@@ -96,7 +96,7 @@
                           "enabled":  true,
                           "durationSeconds":  6,
                           "showRuleName":  true,
-                          "showBrowserPageAlerts":  false,
+                          "showBrowserPageAlerts":  true,
                           "duplicateWindowSeconds":  3,
                           "position":  "TopRight"
                       },
@@ -188,10 +188,11 @@
                     },
     "fileClassification":  {
                                "enabled":  true,
-                               "provider":  "BlockAll",
+                               "provider":  "AiApi",
                                "failClosed":  true,
                                "backendPath":  "api/v1/agent/file-classification",
                                "timeoutSeconds":  30,
-                               "maximumFileSizeBytes":  2147483648
+                               "maximumFileSizeBytes":  2147483648,
+                               "portalBaseUrl":  "https://REPLACE_WITH_PORTAL_URL"
                            }
 }

@@ -208,6 +208,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  // Transmission-time check for browser.upload/browser.drag-drop (see page-guard.js): a fast local
+  // cache+grant lookup on the agent, keyed by the file's hash - never a live AI classification call.
+  // Routed straight to the native evaluatePermission message rather than the locally-cached
+  // evaluatePermission() function above, since only the agent has the local file-classification
+  // cache needed to resolve a ClassificationTier-scoped grant.
+  if (message?.type === "evaluateFileUpload") {
+    sendNative({ type: "evaluatePermission", actionKey: message.actionKey, fileHash: message.fileHash })
+      .then((response) => {
+        sendResponse({
+          allowed: response?.success === true && response?.data?.isAllowed === true,
+          reasonCode: response?.data?.reasonCode || (response?.success ? "" : "NativeRequestFailed"),
+          fileClassification: response?.data?.fileClassification || "",
+          fileClassificationReasonCode: response?.data?.fileClassificationReasonCode || ""
+        });
+      });
+    return true;
+  }
+
   return false;
 });
 

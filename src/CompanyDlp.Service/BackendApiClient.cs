@@ -67,15 +67,53 @@ public sealed class BackendApiClient(
 
     public Task<FileClassificationResult> ClassifyFileAsync(
         FileClassificationRequest request,
+        CancellationToken cancellationToken) =>
+        SendJsonAsync<FileClassificationRequest, FileClassificationResult>(
+            HttpMethod.Post,
+            policyStore.Get().FileClassification.BackendPath,
+            request,
+            cancellationToken,
+            policyStore.Get().FileClassification.TimeoutSeconds);
+
+    // fileContent carries the file's actual bytes (background-scan classification only - see
+    // FileInventoryScanner, the only caller with real file access) as a multipart upload, since the
+    // backend relays them to the real AI classifier API, which needs the content itself.
+    public async Task<FileClassificationResult> ClassifyFileAsync(
+        FileClassificationRequest request,
+        Stream fileContent,
         CancellationToken cancellationToken)
     {
         var classificationPolicy = policyStore.Get().FileClassification;
-        return SendJsonAsync<FileClassificationRequest, FileClassificationResult>(
-            HttpMethod.Post,
-            classificationPolicy.BackendPath,
-            request,
-            cancellationToken,
-            classificationPolicy.TimeoutSeconds);
+        var backend = policyStore.Get().Backend;
+        using var timeout = CreateTimeout(classificationPolicy.TimeoutSeconds, cancellationToken);
+        var client = CreateClient(backend);
+
+        using var content = new MultipartFormDataContent
+        {
+            { new StringContent(System.Text.Json.JsonSerializer.Serialize(request, JsonDefaults.Options)), "request" }
+        };
+        using var streamContent = new StreamContent(fileContent);
+        content.Add(streamContent, "file", string.IsNullOrWhiteSpace(request.FileName) ? "file" : request.FileName);
+
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, classificationPolicy.BackendPath)
+        {
+            Content = content
+        };
+        authenticator.Apply(httpRequest);
+        using var response = await client.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(timeout.Token);
+            var safeBody = body.Replace('\r', ' ').Replace('\n', ' ').Trim();
+            if (safeBody.Length > 2000) safeBody = safeBody[..2000];
+            throw new HttpRequestException(
+                $"Backend request POST {classificationPolicy.BackendPath} failed with {(int)response.StatusCode} ({response.ReasonPhrase}). Response: {safeBody}",
+                inner: null,
+                statusCode: response.StatusCode);
+        }
+
+        return await response.Content.ReadFromJsonAsync<FileClassificationResult>(JsonDefaults.Options, timeout.Token)
+            ?? throw new InvalidOperationException($"Backend returned an empty response for {classificationPolicy.BackendPath}.");
     }
 
     public async Task<AgentEnrollmentResponse> EnrollAsync(
