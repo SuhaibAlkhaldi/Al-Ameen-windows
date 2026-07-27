@@ -23,6 +23,7 @@ public static class DlpMessageTypes
     public const string EvaluatePermission = "evaluatePermission";
     public const string ProtectFile = "protectFile";
     public const string GetOutboxStatus = "getOutboxStatus";
+    public const string GetFileClassificationStatus = "getFileClassificationStatus";
 }
 
 public sealed class DlpRequest

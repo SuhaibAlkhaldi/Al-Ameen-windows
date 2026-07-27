@@ -21,6 +21,7 @@ public sealed class PipeServer(
     ContentClassifier classifier,
     FileClassificationService fileClassificationService,
     FileClassificationCache fileClassificationCache,
+    FileClassificationStatusResolver fileClassificationStatusResolver,
     AuditLogger auditLogger,
     AuditOutbox auditOutbox,
     FileProtectionCoordinator fileProtectionCoordinator,
@@ -231,7 +232,13 @@ public sealed class PipeServer(
                 if (!string.IsNullOrWhiteSpace(input.FileHash))
                 {
                     var cached = fileClassificationCache.TryGet(input.FileHash);
-                    decision.FileClassification = cached?.Classification;
+
+                    // No cache entry means the file hasn't been classified yet - PermissionEvaluator
+                    // (a few lines above) already treats this as ClassificationTiers.VerySecret for
+                    // the fail-closed block decision itself; the displayed classification must match
+                    // that same fallback, or the Request Permission page shows no tier at all for an
+                    // upload that was, in fact, blocked as Very Secret.
+                    decision.FileClassification = cached?.Classification ?? ClassificationTiers.VerySecret;
                     decision.FileClassificationReasonCode = cached?.ReasonCode;
                 }
 
@@ -276,6 +283,12 @@ public sealed class PipeServer(
                     ?? new FileClassificationRequest();
                 var result = await fileClassificationService.ClassifyAsync(input, request.Context, cancellationToken);
                 return DlpResponse.Ok(data: result);
+            }
+            case DlpMessageTypes.GetFileClassificationStatus:
+            {
+                var input = request.Data?.Deserialize<FileClassificationStatusRequest>(JsonDefaults.Options)
+                    ?? new FileClassificationStatusRequest();
+                return DlpResponse.Ok(data: fileClassificationStatusResolver.Resolve(input.FilePath));
             }
             case DlpMessageTypes.Audit:
             {

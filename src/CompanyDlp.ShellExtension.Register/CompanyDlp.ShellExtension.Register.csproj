@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- Same framework as CompanyDlp.ShellExtension (net48) - registers/unregisters the InfoTip
+         COM handler via SharpShell's own ServerRegistrationManager API, invoked by
+         scripts\register-shell-extension-production.ps1 / unregister-shell-extension.ps1 instead
+         of raw regasm.exe (SharpShell handles the CLSID/InprocServer32/shellex registry shape). -->
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>12</LangVersion>
+    <RootNamespace>CompanyDlp.ShellExtension.Register</RootNamespace>
+    <AssemblyName>CompanyDlp.ShellExtension.Register</AssemblyName>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <Platforms>x64</Platforms>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\CompanyDlp.ShellExtension\CompanyDlp.ShellExtension.csproj" />
+  </ItemGroup>
+</Project>

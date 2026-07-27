@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- .NET Framework 4.8, not net8.0(-windows) like every other project in this solution: the
+         in-proc COM shell extension explorer.exe loads is far more reliable hosted from classic
+         .NET Framework than modern .NET (see plan notes).
+         Adds a "DLP" tab to the file Properties dialog (IShellPropSheetExt), NOT a hover tooltip -
+         an earlier IQueryInfo/InfoTip-based approach was tried and proven (via an isolated,
+         narrowly-scoped test) to REPLACE Explorer's entire default tooltip instead of appending to
+         it, so it was abandoned. A property sheet page is strictly additive: it only ever adds a
+         new tab, never touches any existing Explorer UI. -->
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>12</LangVersion>
+    <RootNamespace>CompanyDlp.ShellExtension</RootNamespace>
+    <AssemblyName>CompanyDlp.ShellExtension</AssemblyName>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <Platforms>x64</Platforms>
+    <UseWindowsForms>true</UseWindowsForms>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SharpShell" Version="2.7.2" />
+  </ItemGroup>
+
+  <!-- JavaScriptSerializer (System.Web.Extensions) is used instead of System.Text.Json for the pipe
+       protocol's JSON - see StatusPipeClient.cs's header comment for why: a class library loaded
+       in-proc by explorer.exe via mscoree.dll never gets its own binding-redirect config consulted,
+       so any dependency on a NuGet-versioned assembly like System.Text.Json is fragile in this
+       specific hosting scenario. System.Web.Extensions ships in the GAC with .NET Framework itself,
+       so there is no version to redirect, ever. -->
+  <ItemGroup>
+    <Reference Include="System.Web.Extensions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\CompanyDlp.Contracts\CompanyDlp.Contracts.csproj" />
+  </ItemGroup>
+</Project>

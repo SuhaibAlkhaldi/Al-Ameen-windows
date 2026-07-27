@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using CompanyDlp.Contracts;
 using CompanyDlp.Core;
@@ -9,9 +10,15 @@ namespace CompanyDlp.Service;
 // is always a fast local FileClassificationCache lookup instead of a live AI call. Files with no
 // cache entry yet are treated as ClassificationTiers.VerySecret by PermissionEvaluator - this
 // class only ever narrows that down once a real classification is available.
+//
+// This class also maintains FileClassificationStatusStore, a path-indexed, display-only status
+// (Not Scanned/Pending/Scanning/Up to Date/Reclassification Required/Failed/Unsupported) consumed
+// by the Explorer hover-tooltip feature (CompanyDlp.ShellExtension). That store is purely additive:
+// PermissionEvaluator never reads it and continues to enforce exclusively off FileClassificationCache.
 public sealed class FileInventoryScanner(
     FileClassificationService classificationService,
     FileClassificationCache cache,
+    FileClassificationStatusStore statusStore,
     InteractiveUserContextProvider interactiveUserContextProvider,
     ILogger<FileInventoryScanner> logger)
 {
@@ -21,10 +28,16 @@ public sealed class FileInventoryScanner(
     // and more robust than persisting a separate "files seen" index.
     private readonly Dictionary<string, DateTimeOffset> _lastSeenWriteTimes = new(StringComparer.OrdinalIgnoreCase);
 
+    // In-memory only marker for the "Scanning" status - a classify request currently in flight for
+    // this path. Never persisted: if the service restarts mid-classification, there is no in-flight
+    // request to report on restart, which is correct (the next tick starts fresh).
+    private readonly ConcurrentDictionary<string, byte> _scanningNow = new(StringComparer.OrdinalIgnoreCase);
+
     // Reason codes that mean "we didn't get a real classification" (provider unavailable, no AI
     // provider configured yet, etc.) - a cache entry carrying one of these is a placeholder, not a
     // genuine answer, and should never permanently block a file from being classified for real once
-    // the underlying problem (e.g. provider misconfiguration) is fixed.
+    // the underlying problem (e.g. provider misconfiguration) is fixed. Unchanged from before this
+    // feature - governs only whether an already-cached hash gets re-attempted, not the display status.
     private static readonly HashSet<string> ProvisionalReasonCodes = new(StringComparer.OrdinalIgnoreCase)
     {
         "BlockAllUntilAiProviderAvailable",
@@ -36,6 +49,8 @@ public sealed class FileInventoryScanner(
         "BlockedFileExtension",
         "DefaultAllowStubClassification"
     };
+
+    public bool IsScanning(string path) => _scanningNow.ContainsKey(FileClassificationStatusStore.NormalizePath(path));
 
     public async Task TickAsync(DlpPolicy policy, CancellationToken cancellationToken)
     {
@@ -80,7 +95,30 @@ public sealed class FileInventoryScanner(
             return;
         }
 
+        var normalized = FileClassificationStatusStore.NormalizePath(path);
+
         if (_lastSeenWriteTimes.TryGetValue(path, out var known) && known == info.LastWriteTimeUtc) return;
+
+        // Based on the status store, not _lastSeenWriteTimes - a path that failed classification
+        // last tick has no _lastSeenWriteTimes entry (retried every tick, by design) but is NOT a
+        // new discovery, and must keep showing "Failed" rather than flashing back to "Pending" on
+        // every retry attempt.
+        var existingStatus = statusStore.TryGet(normalized);
+        if (existingStatus is null)
+        {
+            // A path never seen before this process's lifetime - mark it queued immediately so a
+            // hover landing between this line and the classify attempt finishing sees "Pending"
+            // rather than nothing at all.
+            statusStore.Set(new FileClassificationStatusEntry(
+                normalized, FileClassificationStatuses.Pending, null, null, null, DateTimeOffset.UtcNow));
+        }
+        else if (existingStatus.LastClassifiedHash is not null)
+        {
+            // Content changed since the last classification we know about - flip the status BEFORE
+            // re-hashing, not after. If hashing itself then fails (file locked/mid-write, see below),
+            // a stale "Up to Date" would otherwise be left showing indefinitely.
+            statusStore.Set(existingStatus with { Status = FileClassificationStatuses.ReclassificationRequired, UpdatedAtUtc = DateTimeOffset.UtcNow });
+        }
 
         string hash;
         try
@@ -102,6 +140,8 @@ public sealed class FileInventoryScanner(
         if (cached is not null && !ProvisionalReasonCodes.Contains(cached.ReasonCode))
         {
             _lastSeenWriteTimes[path] = info.LastWriteTimeUtc;
+            statusStore.Set(new FileClassificationStatusEntry(
+                normalized, FileClassificationStatuses.UpToDate, hash, cached.ClassifiedAtUtc, cached.ReasonCode, DateTimeOffset.UtcNow));
             return;
         }
 
@@ -115,6 +155,7 @@ public sealed class FileInventoryScanner(
             Destination = ""
         };
 
+        _scanningNow[normalized] = 0;
         try
         {
             // A second, fresh read of the file's bytes for the real AI classification call - simpler
@@ -125,17 +166,54 @@ public sealed class FileInventoryScanner(
             await using var contentStream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             var result = await classificationService.ClassifyAsync(request, context, cancellationToken, contentStream);
             cache.Set(new CachedFileClassification(hash, result.Classification, result.ReasonCode, DateTimeOffset.UtcNow));
-            // Only mark this write-time as "seen" once classification actually succeeded - marking it
-            // unconditionally (as this used to do, before the try block even ran) meant a single
-            // transient failure (a network blip, a momentary AI-API hiccup) permanently stuck the file
-            // as unclassified: the next tick would see the same LastWriteTimeUtc and skip it forever,
-            // never retrying, since nothing about the file itself ever changes again.
-            _lastSeenWriteTimes[path] = info.LastWriteTimeUtc;
+
+            if (FileClassificationReasonCodes.UnsupportedReasonCodes.Contains(result.ReasonCode))
+            {
+                // The AI rejects this file type outright (e.g. a blocked extension) - not transient,
+                // retrying won't change the outcome, so mark it seen like a genuine result to avoid
+                // resubmitting the same rejected file on every tick.
+                _lastSeenWriteTimes[path] = info.LastWriteTimeUtc;
+                statusStore.Set(new FileClassificationStatusEntry(
+                    normalized, FileClassificationStatuses.Unsupported,
+                    existingStatus?.LastClassifiedHash, existingStatus?.LastScannedAtUtc, result.ReasonCode, DateTimeOffset.UtcNow));
+            }
+            else if (FileClassificationReasonCodes.TransientFailureReasonCodes.Contains(result.ReasonCode))
+            {
+                // Deliberately NOT marking _lastSeenWriteTimes here - a transient failure (network
+                // blip, momentary AI-API hiccup) should be retried on the very next tick, not only
+                // after a service restart.
+                statusStore.Set(new FileClassificationStatusEntry(
+                    normalized, FileClassificationStatuses.Failed,
+                    existingStatus?.LastClassifiedHash, existingStatus?.LastScannedAtUtc, result.ReasonCode, DateTimeOffset.UtcNow));
+            }
+            else
+            {
+                _lastSeenWriteTimes[path] = info.LastWriteTimeUtc;
+                statusStore.Set(new FileClassificationStatusEntry(
+                    normalized, FileClassificationStatuses.UpToDate, hash, DateTimeOffset.UtcNow, result.ReasonCode, DateTimeOffset.UtcNow));
+            }
         }
         catch (Exception exception)
         {
             logger.LogWarning(exception, "Background classification failed for {Path}.", path);
+            statusStore.Set(new FileClassificationStatusEntry(
+                normalized, FileClassificationStatuses.Failed,
+                existingStatus?.LastClassifiedHash, existingStatus?.LastScannedAtUtc, "UnhandledClassificationException", DateTimeOffset.UtcNow));
         }
+        finally
+        {
+            _scanningNow.TryRemove(normalized, out _);
+        }
+    }
+
+    // node_modules folders hold thousands of library files that are never user content and don't
+    // need classification - scanning them anyway means the very first tick after a fresh npm
+    // install can spend hours making real AI classification calls for every one of those files
+    // before it ever gets back around to re-checking an actual user document.
+    private static bool IsInsideNodeModules(string path)
+    {
+        return path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            .Any(segment => segment.Equals("node_modules", StringComparison.OrdinalIgnoreCase));
     }
 
     private IEnumerable<string> EnumerateFilesSafely(string root)
@@ -168,7 +246,7 @@ public sealed class FileInventoryScanner(
                     yield break;
                 }
 
-                yield return current;
+                if (!IsInsideNodeModules(current)) yield return current;
             }
         }
     }

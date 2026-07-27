@@ -35,6 +35,19 @@ foreach ($project in $projects) {
     if ($LASTEXITCODE -ne 0) { throw "Publish failed for $($project.Name)." }
 }
 
+# CompanyDlp.ShellExtension/.Register target classic .NET Framework 4.8 (not net8.0(-windows) like
+# every other project here) - the in-proc COM InfoTip handler explorer.exe loads is far more
+# reliable hosted from .NET Framework. A framework-dependent .NET Framework build doesn't take
+# -r/--self-contained the way the net8.0 projects above do; it's just a plain configuration publish.
+$netFrameworkProjects = @(
+    @{ Name = "ShellExtension"; Path = "src\CompanyDlp.ShellExtension\CompanyDlp.ShellExtension.csproj" },
+    @{ Name = "ShellExtension"; Path = "src\CompanyDlp.ShellExtension.Register\CompanyDlp.ShellExtension.Register.csproj" }
+)
+foreach ($project in $netFrameworkProjects) {
+    dotnet publish (Join-Path $root $project.Path) -c $Configuration -o (Join-Path $out $project.Name)
+    if ($LASTEXITCODE -ne 0) { throw "Publish failed for $($project.Path)." }
+}
+
 Copy-Item (Join-Path $root "browser-extension") (Join-Path $out "browser-extension") -Recurse -Force
 Copy-Item (Join-Path $root "firefox-extension") (Join-Path $out "firefox-extension") -Recurse -Force
 Copy-Item (Join-Path $root "config\policy.production.sample.json") (Join-Path $out "policy.production.sample.json") -Force

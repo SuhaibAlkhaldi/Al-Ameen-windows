@@ -60,6 +60,9 @@ $desktopExe = Join-Path $installDir "Desktop\CompanyDlp.Desktop.exe"
 
 & (Join-Path $PSScriptRoot "register-production-context-menu.ps1") -DesktopExe $desktopExe
 
+& (Join-Path $PSScriptRoot "register-shell-extension-production.ps1") `
+    -RegisterExe (Join-Path $installDir "ShellExtension\CompanyDlp.ShellExtension.Register.exe")
+
 & (Join-Path $PSScriptRoot "register-native-host-production.ps1") `
     -NativeHostExe (Join-Path $installDir "NativeHost\CompanyDlp.NativeHost.exe") `
     -ExtensionIds @($ChromeExtensionId, $EdgeExtensionId)

@@ -90,3 +90,56 @@ public sealed class FileClassificationResult
     public DateTimeOffset EvaluatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? ValidUntilUtc { get; set; }
 }
+
+// Display-only status for the Explorer hover tooltip (CompanyDlp.ShellExtension) - tracked per file
+// PATH by FileInventoryScanner/FileClassificationStatusStore, separate from the hash-keyed
+// FileClassificationCache used for enforcement. Does not affect PermissionEvaluator in any way.
+public static class FileClassificationStatuses
+{
+    public const string NotScanned = "NotScanned";
+    public const string Pending = "Pending";
+    public const string Scanning = "Scanning";
+    public const string UpToDate = "UpToDate";
+    public const string ReclassificationRequired = "ReclassificationRequired";
+    public const string Failed = "Failed";
+    public const string Unsupported = "Unsupported";
+}
+
+// Used only by FileInventoryScanner to decide which FileClassificationStatuses value to persist for
+// a file after a classification attempt - not referenced by PermissionEvaluator. Distinguishing
+// "the AI rejected this file type" (Unsupported, not retried until content changes) from "a
+// transient network/API failure" (Failed, retried every scan tick) requires the backend to return
+// two different reason codes for these two cases (see DLPManagementSystem's FileClassificationService).
+public static class FileClassificationReasonCodes
+{
+    public const string AiApiTransientError = "AiApiTransientError";
+    public const string AiFileTypeRejected = "AiFileTypeRejected";
+
+    public static readonly HashSet<string> TransientFailureReasonCodes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "BlockAllUntilAiProviderAvailable",
+        "ClassificationProviderUnavailableFailClosed",
+        "NoFileContentAvailableForAiClassification",
+        "BlockedFileExtension",
+        "DefaultAllowStubClassification",
+        AiApiTransientError
+    };
+
+    public static readonly HashSet<string> UnsupportedReasonCodes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        AiFileTypeRejected
+    };
+}
+
+public sealed class FileClassificationStatusRequest
+{
+    public string FilePath { get; set; } = "";
+}
+
+public sealed class FileClassificationStatusResponse
+{
+    public string FilePath { get; set; } = "";
+    public string Status { get; set; } = FileClassificationStatuses.NotScanned;
+    public string Classification { get; set; } = "Unclassified";
+    public DateTimeOffset? LastScannedAtUtc { get; set; }
+}

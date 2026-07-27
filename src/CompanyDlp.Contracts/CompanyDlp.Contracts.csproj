@@ -1,5 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <!-- netstandard2.0 leg lets CompanyDlp.ShellExtension (.NET Framework 4.8, required for the
+         in-proc COM InfoTip handler explorer.exe loads) reference these DTOs directly instead of
+         duplicating DlpRequest/DlpResponse/the file-classification status contracts by hand. -->
+    <TargetFrameworks>net8.0;netstandard2.0</TargetFrameworks>
+    <LangVersion>12</LangVersion>
   </PropertyGroup>
+  <ItemGroup Condition="'$(TargetFramework)'=='netstandard2.0'">
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
+  </ItemGroup>
 </Project>
