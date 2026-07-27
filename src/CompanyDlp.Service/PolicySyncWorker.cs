@@ -64,6 +64,7 @@ public sealed class PolicySyncWorker(
         }
 
         policyStore.ApplyRemoteSnapshot(snapshot);
+        logger.LogInformation("Watermark policy updated: {State}.", snapshot.Policy.Watermark.Enabled ? "Enabled" : "Disabled");
         await auditLogger.WriteAsync(new AuditEvent
         {
             ActionKey = "policy.apply",
