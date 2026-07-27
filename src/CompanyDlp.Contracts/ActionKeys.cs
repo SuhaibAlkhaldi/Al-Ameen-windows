@@ -18,6 +18,7 @@ public static class ActionKeys
     public const string SoftwareExecuteUnapproved = "software.execute-unapproved";
     public const string FileEncrypt = "file.encrypt";
     public const string FileDecrypt = "file.decrypt";
+    public const string WatermarkDisable = "watermark.disable";
 
     public static IReadOnlySet<string> All { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
@@ -35,6 +36,7 @@ public static class ActionKeys
         SoftwareInstall,
         SoftwareExecuteUnapproved,
         FileEncrypt,
-        FileDecrypt
+        FileDecrypt,
+        WatermarkDisable
     };
 }
