@@ -88,6 +88,28 @@ public sealed class PermissionEvaluator(FileClassificationCache? classificationC
         var allowed = policy.Permissions.DefaultPermissions.TryGetValue(actionKey, out var configured)
             && configured;
 
+        // An action whose DefaultPermissions is already Deny (e.g. browser.upload) is unaffected by
+        // this - it falls through to the same GlobalDefaultDeny below it always has. This only ever
+        // matters for an action whose default is Allow (today, only file.decrypt): a file evaluated
+        // WITH classification context (fileHash resolved - whether or not that hash has a cache hit,
+        // a miss already fail-closed to VerySecret above) that ranks above Public and has no matching
+        // grant must be denied despite the action's default, since an explicit grant (plain,
+        // file-scoped, or tier-scoped) is required to access anything above Public once classification
+        // is known. A file with NO classification context at all (fileHash is null - e.g. a legacy
+        // .dlpenc file predating this feature, or the encrypt-time classification lookup failed to
+        // record an association) is untouched by this and keeps the action's plain default, so
+        // existing decrypt workflows keep working during the migration window.
+        if (allowed && fileHash is not null && fileRank is not null && fileRank.Value > ClassificationTiers.RankOf(ClassificationTiers.Public))
+        {
+            return new PermissionDecision
+            {
+                ActionKey = actionKey,
+                IsAllowed = false,
+                ReasonCode = "ClassificationRequiresExplicitGrant",
+                PermissionSource = PermissionSources.GlobalDefault
+            };
+        }
+
         return new PermissionDecision
         {
             ActionKey = actionKey,

@@ -282,4 +282,117 @@ public sealed class PermissionEvaluatorFileScopeTests
 
         Assert.True(result.IsAllowed);
     }
+
+    private DlpPolicy CreateFileDecryptDefaultAllowPolicy() => new()
+    {
+        Permissions = new PermissionPolicy
+        {
+            DefaultPermissions = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase)
+            {
+                [ActionKeys.FileDecrypt] = true
+            }
+        }
+    };
+
+    [Fact]
+    public void FileDecrypt_ClassifiedSecretWithNoGrant_IsDeniedDespiteDefaultAllow()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var hash = NewFileHash();
+        var cache = NewCache();
+        cache.Set(new CachedFileClassification(hash, ClassificationTiers.Secret, "AiClassified", now));
+
+        var evaluator = new PermissionEvaluator(cache);
+        var result = evaluator.Evaluate(CreateFileDecryptDefaultAllowPolicy(), ActionKeys.FileDecrypt, _context, _identity, now, hash);
+
+        Assert.False(result.IsAllowed);
+        Assert.Equal("ClassificationRequiresExplicitGrant", result.ReasonCode);
+    }
+
+    [Fact]
+    public void FileDecrypt_ClassifiedPublicWithNoGrant_IsAllowed()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var hash = NewFileHash();
+        var cache = NewCache();
+        cache.Set(new CachedFileClassification(hash, ClassificationTiers.Public, "AiClassified", now));
+
+        var evaluator = new PermissionEvaluator(cache);
+        var result = evaluator.Evaluate(CreateFileDecryptDefaultAllowPolicy(), ActionKeys.FileDecrypt, _context, _identity, now, hash);
+
+        Assert.True(result.IsAllowed);
+        Assert.Equal("PublicClassification", result.ReasonCode);
+    }
+
+    [Fact]
+    public void FileDecrypt_NoClassificationContextAtAll_FallsBackToDefaultAllow()
+    {
+        // fileHash is null (not merely uncached) - simulates a legacy .dlpenc file, or a fileId with
+        // no EncryptedFileHashStore entry - which must keep working during the migration window.
+        var now = DateTimeOffset.UtcNow;
+        var evaluator = new PermissionEvaluator(NewCache());
+        var result = evaluator.Evaluate(CreateFileDecryptDefaultAllowPolicy(), ActionKeys.FileDecrypt, _context, _identity, now);
+
+        Assert.True(result.IsAllowed);
+        Assert.Equal("GlobalDefaultAllow", result.ReasonCode);
+    }
+
+    [Fact]
+    public void FileDecrypt_TierScopedGrant_UnlocksOnlyAtOrBelowGrantedTier()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var secretHash = NewFileHash();
+        var verySecretHash = NewFileHash();
+        var cache = NewCache();
+        cache.Set(new CachedFileClassification(secretHash, ClassificationTiers.Secret, "AiClassified", now));
+        cache.Set(new CachedFileClassification(verySecretHash, ClassificationTiers.VerySecret, "AiClassified", now));
+
+        var policy = CreateFileDecryptDefaultAllowPolicy();
+        policy.Permissions.Grants.Add(new PermissionGrant
+        {
+            ActionKey = ActionKeys.FileDecrypt,
+            Allowed = true,
+            SubjectType = PermissionSubjectTypes.UserSid,
+            SubjectId = _context.UserSid,
+            Source = PermissionSources.TemporaryGrant,
+            StartsAtUtc = now.AddMinutes(-1),
+            ExpiresAtUtc = now.AddMinutes(10),
+            ClassificationTier = ClassificationTiers.Secret,
+            Priority = 500
+        });
+
+        var evaluator = new PermissionEvaluator(cache);
+        var secretResult = evaluator.Evaluate(policy, ActionKeys.FileDecrypt, _context, _identity, now, secretHash);
+        var verySecretResult = evaluator.Evaluate(policy, ActionKeys.FileDecrypt, _context, _identity, now, verySecretHash);
+
+        Assert.True(secretResult.IsAllowed);
+        Assert.False(verySecretResult.IsAllowed);
+    }
+
+    [Fact]
+    public void FileDecrypt_UnscopedGrant_UnlocksEveryTierIncludingVerySecret()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var hash = NewFileHash();
+        var cache = NewCache();
+        cache.Set(new CachedFileClassification(hash, ClassificationTiers.VerySecret, "AiClassified", now));
+
+        var policy = CreateFileDecryptDefaultAllowPolicy();
+        policy.Permissions.Grants.Add(new PermissionGrant
+        {
+            ActionKey = ActionKeys.FileDecrypt,
+            Allowed = true,
+            SubjectType = PermissionSubjectTypes.UserSid,
+            SubjectId = _context.UserSid,
+            Source = PermissionSources.TemporaryGrant,
+            StartsAtUtc = now.AddMinutes(-1),
+            ExpiresAtUtc = now.AddMinutes(10),
+            Priority = 500
+        });
+
+        var evaluator = new PermissionEvaluator(cache);
+        var result = evaluator.Evaluate(policy, ActionKeys.FileDecrypt, _context, _identity, now, hash);
+
+        Assert.True(result.IsAllowed);
+    }
 }

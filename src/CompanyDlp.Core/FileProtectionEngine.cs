@@ -110,6 +110,28 @@ public sealed class FileProtectionEngine(
         }
     }
 
+    // Reads just enough of a .dlpenc file to recover its fileId - the header (magic, version, fileId,
+    // wrapped key, name, length, chunk size, nonce) is entirely unencrypted/unauthenticated-by-AEAD
+    // metadata, so this is cheap stream I/O with no key unwrap and no decryption of any chunk. Used by
+    // FileProtectionCoordinator to resolve a file's classification (via EncryptedFileHashStore, keyed
+    // by fileId) before deciding whether decrypt is even allowed.
+    public async Task<Guid> PeekFileIdAsync(string encryptedPath, CancellationToken cancellationToken = default)
+    {
+        var fullEncryptedPath = ValidateSourceFile(encryptedPath);
+        if (!fullEncryptedPath.EndsWith(".dlpenc", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("The selected file is not a .dlpenc file.");
+
+        await using var source = new FileStream(
+            fullEncryptedPath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            DefaultChunkSize,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+        var header = await ReadHeaderAsync(source, cancellationToken);
+        return header.FileId;
+    }
+
     public async Task<FileProtectionOperationResult> DecryptAsync(
         string encryptedPath,
         CancellationToken cancellationToken = default)

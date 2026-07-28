@@ -28,6 +28,7 @@ builder.Services.AddSingleton<BlockAllFileClassificationProvider>();
 builder.Services.AddSingleton<AiApiFileClassificationProvider>();
 builder.Services.AddSingleton<FileClassificationService>();
 builder.Services.AddSingleton<FileClassificationCache>();
+builder.Services.AddSingleton<EncryptedFileHashStore>();
 builder.Services.AddSingleton<FileClassificationStatusStore>();
 builder.Services.AddSingleton<FileInventoryScanner>();
 builder.Services.AddSingleton<FileClassificationStatusResolver>();
