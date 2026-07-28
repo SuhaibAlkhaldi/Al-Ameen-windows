@@ -26,6 +26,7 @@ public partial class MainWindow : Window
     private ScreenCaptureHotkeyBlocker? _hotkeyBlocker;
     private ScreenRecordingProcessBlocker? _screenRecordingBlocker;
     private WatermarkManager? _watermarkManager;
+    private bool _watermarkDisableGranted;
     private bool _localProtectionStarted;
     private bool _testSessionStarted;
     private DispatcherTimer? _notificationPollTimer;
@@ -106,11 +107,15 @@ public partial class MainWindow : Window
     {
         if (_localProtectionStarted || _policy is null || !_policy.Enabled) return;
 
-        if (_policy.Watermark.Enabled)
+        if (_policy.Watermark.Enabled && !_watermarkDisableGranted)
         {
             _watermarkManager = new WatermarkManager(_policy.Watermark);
             _watermarkManager.Start();
             WatermarkStatusText.Text = "Active on all detected monitors";
+        }
+        else if (_policy.Watermark.Enabled)
+        {
+            WatermarkStatusText.Text = "Disabled by an approved permission grant";
         }
 
         if (_policy.Clipboard.Enabled)
@@ -382,6 +387,7 @@ public partial class MainWindow : Window
         if (fingerprint.Equals(_effectivePolicyFingerprint, StringComparison.Ordinal))
         {
             _policy = effectivePolicy;
+            await RefreshWatermarkGrantAsync();
             return;
         }
 
@@ -403,8 +409,40 @@ public partial class MainWindow : Window
         }
 
         _policy = effectivePolicy;
+        await RefreshWatermarkGrantAsync();
         if (protectionWasRunning) StartLocalProtection();
-        await Task.CompletedTask;
+    }
+
+    // Grants (approved via the admin portal's Permission Requests flow) are a separate concept
+    // from the DlpPolicy snapshot above, so a newly-approved watermark.disable grant would never
+    // be picked up by the fingerprint-diff check this method normally relies on - re-evaluate it
+    // unconditionally, on the same 2-second cadence as the policy poll, and toggle the live
+    // WatermarkManager immediately if the state actually changed instead of waiting for the next
+    // policy change (which may never come) to re-run StartLocalProtection.
+    private async Task RefreshWatermarkGrantAsync()
+    {
+        var response = await _pipeClient.SendAsync(
+            DlpMessageTypes.EvaluatePermission,
+            new PermissionEvaluationRequest { ActionKey = ActionKeys.WatermarkDisable });
+        var decision = response.Data?.Deserialize<PermissionDecision>(JsonDefaults.Options);
+        var granted = decision?.IsAllowed ?? false;
+        if (granted == _watermarkDisableGranted) return;
+
+        _watermarkDisableGranted = granted;
+        if (!_localProtectionStarted || _policy is null || !_policy.Watermark.Enabled) return;
+
+        if (granted)
+        {
+            _watermarkManager?.Dispose();
+            _watermarkManager = null;
+            WatermarkStatusText.Text = "Disabled by an approved permission grant";
+        }
+        else
+        {
+            _watermarkManager ??= new WatermarkManager(_policy.Watermark);
+            _watermarkManager.Start();
+            WatermarkStatusText.Text = "Active on all detected monitors";
+        }
     }
 
     private void StartNotificationPolling()

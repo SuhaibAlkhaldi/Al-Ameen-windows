@@ -261,6 +261,7 @@ public sealed class PipeServer(
                         request.Context,
                         identityProvider.Get(),
                         DateTimeOffset.UtcNow);
+                    result.AllowedByGrant = decision.IsAllowed;
 
                     await auditLogger.WriteAsync(new AuditEvent
                     {
