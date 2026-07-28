@@ -18,6 +18,7 @@ public static class ActionKeys
     public const string SoftwareExecuteUnapproved = "software.execute-unapproved";
     public const string FileEncrypt = "file.encrypt";
     public const string FileDecrypt = "file.decrypt";
+    public const string WatermarkDisable = "watermark.disable";
 
     // IReadOnlySet<string> isn't available on netstandard2.0 (this project multi-targets net8.0 and
     // netstandard2.0 so CompanyDlp.ShellExtension, a .NET Framework 4.8 project, can reference it
@@ -38,6 +39,7 @@ public static class ActionKeys
         SoftwareInstall,
         SoftwareExecuteUnapproved,
         FileEncrypt,
-        FileDecrypt
+        FileDecrypt,
+        WatermarkDisable
     };
 }
