@@ -13,6 +13,11 @@ public sealed class ClassificationResult
     public bool IsSensitive { get; set; }
     public bool FragmentAssemblyDetected { get; set; }
     public List<ClassificationMatch> Matches { get; set; } = [];
+
+    // Set by PipeServer's ClassifyText handler from the ClipboardCopySensitive PermissionEvaluator
+    // decision - lets the caller (ClipboardProtectionManager) actually respect an approved grant,
+    // instead of the grant only ever affecting the audit log's allowed/blocked label.
+    public bool AllowedByGrant { get; set; }
 }
 
 public sealed class ClassificationMatch
