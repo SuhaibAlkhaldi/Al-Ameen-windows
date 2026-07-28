@@ -163,6 +163,18 @@ app.MapGet("/health", async (CompanyDlpDbContext db, CancellationToken ct) =>
         serverTimeUtc = DateTimeOffset.UtcNow
     });
 });
+// scripts\run-development.ps1 polls this exact path before starting the Service/Desktop - same
+// check as /health, just under the path name the launcher expects.
+app.MapGet("/health/ready", async (CompanyDlpDbContext db, CancellationToken ct) =>
+{
+    var databaseAvailable = await db.Database.CanConnectAsync(ct);
+    return Results.Ok(new
+    {
+        status = databaseAvailable ? "Healthy" : "Degraded",
+        databaseAvailable,
+        serverTimeUtc = DateTimeOffset.UtcNow
+    });
+});
 app.MapAuthEndpoints();
 app.MapAdminUserEndpoints();
 app.MapAdminManagementEndpoints();
