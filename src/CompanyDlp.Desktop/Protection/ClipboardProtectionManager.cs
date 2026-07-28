@@ -237,6 +237,12 @@ if (!result.IsSensitive)
     return;
 }
 
+if (result.AllowedByGrant)
+{
+    statusCallback("Clipboard sensitive copy is allowed by an approved permission grant; not blocking.");
+    return;
+}
+
 await BlockClipboardAsync(result);
         }
         finally
