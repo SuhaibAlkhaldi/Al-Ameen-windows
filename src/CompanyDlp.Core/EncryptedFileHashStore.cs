@@ -76,10 +76,9 @@ public sealed class EncryptedFileHashStore(PolicyStore policyStore, ILogger<Encr
         }
     }
 
-    // A .dlpenc file whose original hash genuinely cannot be resolved (no local record, and the
-    // backend's historical audit trail - see BackendApiClient.TryGetHistoricalFileHashAsync - has no
-    // recoverable entry either, e.g. a fully-offline-encrypted or pre-audit-logging legacy file) must
-    // never be evaluated as if it had no classification context at all - that would fall back to the
+    // A .dlpenc file whose original hash genuinely cannot be resolved (no local record - e.g. a file
+    // encrypted before this store existed) must never be evaluated as if it had no classification
+    // context at all - that would fall back to the
     // action's plain default-allow (see PermissionEvaluator), letting an unclassified file bypass
     // tier-gated decrypt entirely. This sentinel is deterministic per fileId, guaranteed to miss
     // FileClassificationCache (never collides with a real 64-hex-char SHA-256), so PermissionEvaluator's
