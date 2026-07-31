@@ -29,13 +29,21 @@ public sealed class PolicyStore(
         lock (_sync) return _policy;
     }
 
-    // AgentDlpPolicyDto (backend) only carries PolicyVersion/Enabled/Runtime/Backend/Permissions/
-    // SensitiveRules - every other DlpPolicy section is agent-local configuration the backend's
-    // schema doesn't model at all. Deserializing a remote snapshot built from that DTO leaves all of
-    // these at bare C# defaults, silently discarding whatever the local policy file actually said
-    // (this is how a local edit to, say, Notifications.ShowBrowserPageAlerts or
-    // FileClassification.Provider could keep reverting on its own). Both Reload() and
-    // ApplyRemoteSnapshot() must restore this whole set from whatever's already locally active.
+    // Every DlpPolicy section here is agent-local-only configuration - which server to talk to,
+    // whether unsigned policies are trusted, the signing public key, timeouts/sync intervals
+    // (Backend), and which protection features are locally enabled (everything else) - a remote
+    // policy payload must never be able to change any of it, regardless of what the backend happens
+    // to send, now or in the future. Both Reload() and ApplyRemoteSnapshot() must restore this whole
+    // set from whatever's already locally active.
+    //
+    // Backend and Runtime specifically: the backend previously hardcoded fabricated values into these
+    // two sections on every response (e.g. Backend.BaseUrl = "https://localhost:7008" regardless of
+    // the device's real install), and this method didn't preserve them - so a device that accepted an
+    // unsigned Development policy update would have its own connection settings silently overwritten
+    // with those fabricated values, self-disconnecting from its real backend on the very next sync
+    // call (BackendApiClient re-reads policyStore.Get().Backend fresh on every call, no caching).
+    // Preserving them here is defense in depth: it holds even if a future bug on the backend side
+    // reintroduces bad hardcoded values, rather than relying on the backend always being correct.
     private static void PreserveLocalOnlySections(DlpPolicy target, DlpPolicy localSource)
     {
         target.Clipboard = localSource.Clipboard;
@@ -47,6 +55,8 @@ public sealed class PolicyStore(
         target.Software = localSource.Software;
         target.FileProtection = localSource.FileProtection;
         target.FileClassification = localSource.FileClassification;
+        target.Backend = localSource.Backend;
+        target.Runtime = localSource.Runtime;
     }
 
     public DlpPolicy Reload()
