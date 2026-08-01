@@ -53,7 +53,7 @@ public sealed class PolicySyncWorker(
         {
             await auditLogger.WriteAsync(new AuditEvent
             {
-                ActionKey = "policy.apply",
+                ActionKey = ActionKeys.PolicyApply,
                 EventType = "PolicyRejected",
                 Action = "remote-policy",
                 Result = "blocked",

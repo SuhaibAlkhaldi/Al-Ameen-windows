@@ -20,12 +20,17 @@ public static class ActionKeys
     public const string FileDecrypt = "file.decrypt";
     public const string WatermarkDisable = "watermark.disable";
 
+    // Not a gateable permission action (no DefaultPermissions entry, not in All below) - just the
+    // audit-event action key PolicySyncWorker tags its own "applied a new policy" events with.
+    public const string PolicyApply = "policy.apply";
+
     // IReadOnlySet<string> isn't available on netstandard2.0 (this project multi-targets net8.0 and
     // netstandard2.0 so CompanyDlp.ShellExtension, a .NET Framework 4.8 project, can reference it
     // directly) - HashSet<string> already exposes Contains/enumeration to every existing caller here.
     public static HashSet<string> All { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         AgentSession,
+        BrowserDownload,
         ScreenCapture,
         ScreenRecording,
         ClipboardCopySensitive,
