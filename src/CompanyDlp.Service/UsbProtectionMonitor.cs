@@ -55,9 +55,7 @@ public sealed class UsbProtectionMonitor(
         {
             bundle.IsTrustedBaseline = baseline.Contains(bundle.RootInstanceId);
             var explicitlyApproved = IsExplicitlyApproved(policy.Usb, bundle);
-            var safeHid = policy.Usb.AllowAnyKeyboardOrMouse
-                && bundle.HasKeyboardOrMouse
-                && (!policy.Usb.DenyCompositeDevicesWithForbiddenFunctions || !bundle.HasForbiddenFunction);
+            var safeHid = IsSafeHid(policy.Usb, bundle);
             var userDecision = permissionEvaluator.Evaluate(
                 policy,
                 ResolveGatingActionKey(bundle),
@@ -66,7 +64,7 @@ public sealed class UsbProtectionMonitor(
                 DateTimeOffset.UtcNow);
             decisionsByDevice[bundle.RootInstanceId] = userDecision;
 
-            bundle.IsAllowed = safeHid || explicitlyApproved || bundle.IsTrustedBaseline || userDecision.IsAllowed;
+            bundle.IsAllowed = ResolveIsAllowed(safeHid, explicitlyApproved, bundle.IsTrustedBaseline, userDecision.IsAllowed);
         }
         LastSnapshot = bundles;
 
@@ -210,33 +208,48 @@ public sealed class UsbProtectionMonitor(
 
     public void ResetBaseline() => baselineStore.Reset(inventory.GetPresentBundles());
 
+    // The following decision-rule methods are `internal` (not `private`) solely so CompanyDlp.Tests
+    // (InternalsVisibleTo, see the .csproj) can test the actual device-gating decisions directly -
+    // given a device/policy description, what does the monitor decide - without needing real USB
+    // hardware, WMI enumeration, or pnputil.exe. TickAsync's own orchestration (the two-tick arrival
+    // settle state machine, real UsbDeviceInventory/UsbDeviceController I/O, audit/notification
+    // dispatch) is not covered by those tests - see the test file's own header comment for why.
+
     // Windows PNPClass names (already collected per-bundle by UsbDeviceInventory) that distinguish the
     // two specifically-grantable USB permissions from the general usb.device-connect gate: "DiskDrive" is
     // the standard class for USB mass-storage devices (GUID_DEVCLASS_DISKDRIVE, {4d36e967-...}), "WPD" is
     // Windows Portable Device — MTP/mobile/media devices (GUID_DEVCLASS_WPD, {eec5ad98-...}). Anything else
     // (HID, keyboards/mice, other classes) falls back to the general permission.
-    private static string ResolveGatingActionKey(UsbDeviceBundleInfo bundle)
+    internal static string ResolveGatingActionKey(UsbDeviceBundleInfo bundle)
     {
         if (bundle.Classes.Any(value => value.Equals("DiskDrive", StringComparison.OrdinalIgnoreCase))) return ActionKeys.UsbStorage;
         if (bundle.Classes.Any(value => value.Equals("WPD", StringComparison.OrdinalIgnoreCase))) return ActionKeys.UsbMobileDevice;
         return ActionKeys.UsbDeviceConnect;
     }
 
-    private static string DescribeGatedDeviceType(string gatingActionKey) => gatingActionKey switch
+    internal static string DescribeGatedDeviceType(string gatingActionKey) => gatingActionKey switch
     {
         ActionKeys.UsbStorage => "USB storage device",
         ActionKeys.UsbMobileDevice => "USB mobile device",
         _ => "USB device"
     };
 
-    private static bool IsExplicitlyApproved(UsbPolicy policy, UsbDeviceBundleInfo bundle)
+    internal static bool IsExplicitlyApproved(UsbPolicy policy, UsbDeviceBundleInfo bundle)
     {
         return policy.ApprovedHardwareIds.Any(value => Matches(value, bundle.HardwareId) || Matches(value, bundle.RootInstanceId))
             || policy.ApprovedVidPid.Any(value => Matches(value, $"{bundle.VendorId}:{bundle.ProductId}") || Matches(value, $"VID_{bundle.VendorId}&PID_{bundle.ProductId}"))
             || policy.ApprovedSerialNumbers.Any(value => Matches(value, bundle.SerialNumber));
     }
 
-    private static string ResolveAllowMethod(UsbPolicy policy, UsbDeviceBundleInfo bundle, PermissionDecision decision)
+    internal static bool IsSafeHid(UsbPolicy policy, UsbDeviceBundleInfo bundle) =>
+        policy.AllowAnyKeyboardOrMouse
+        && bundle.HasKeyboardOrMouse
+        && (!policy.DenyCompositeDevicesWithForbiddenFunctions || !bundle.HasForbiddenFunction);
+
+    internal static bool ResolveIsAllowed(bool safeHid, bool explicitlyApproved, bool isTrustedBaseline, bool grantAllowed) =>
+        safeHid || explicitlyApproved || isTrustedBaseline || grantAllowed;
+
+    internal static string ResolveAllowMethod(UsbPolicy policy, UsbDeviceBundleInfo bundle, PermissionDecision decision)
     {
         if (decision.IsAllowed) return decision.PermissionSource;
         if (IsExplicitlyApproved(policy, bundle)) return "DeviceAllowlist";
@@ -244,7 +257,7 @@ public sealed class UsbProtectionMonitor(
         return "SafeHid";
     }
 
-    private static string ResolveAllowReason(UsbPolicy policy, UsbDeviceBundleInfo bundle, PermissionDecision decision)
+    internal static string ResolveAllowReason(UsbPolicy policy, UsbDeviceBundleInfo bundle, PermissionDecision decision)
     {
         if (decision.IsAllowed) return decision.ReasonCode;
         if (IsExplicitlyApproved(policy, bundle)) return "ApprovedUsbDevice";
@@ -252,11 +265,11 @@ public sealed class UsbProtectionMonitor(
         return "MouseOrKeyboardAllowed";
     }
 
-    private static bool Matches(string expected, string actual) =>
+    internal static bool Matches(string expected, string actual) =>
         !string.IsNullOrWhiteSpace(expected)
         && expected.Trim().Equals(actual?.Trim(), StringComparison.OrdinalIgnoreCase);
 
-    private static string MaskSerial(string serial)
+    internal static string MaskSerial(string serial)
     {
         if (string.IsNullOrWhiteSpace(serial)) return "";
         return serial.Length <= 4 ? "****" : new string('*', Math.Min(12, serial.Length - 4)) + serial[^4..];
