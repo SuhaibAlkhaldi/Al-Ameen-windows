@@ -1,9 +1,17 @@
 #Requires -RunAsAdministrator
-# Run this ONCE, on a build machine that has the .NET SDK and your real code-signing certificate
+# Run this ONCE, on a build machine that has the .NET SDK and your code-signing certificate
 # installed (not on employee machines). It builds, signs, and assembles everything into one folder
 # you copy to a flash drive - after that, installing on any target machine is just
 # scripts\deploy-agent-portable.ps1 (or double-clicking Install-CompanyDlp.bat), no SDK/cert needed
 # on the target machine, and it will ask for a one-time enrollment code interactively.
+#
+# -RootCertPath is OPTIONAL and only needed if -CertThumbprint refers to a self-signed
+# code-signing certificate rather than one issued by a real CA (DigiCert/Sectigo/etc). A real
+# CA-issued cert is already trusted by every Windows machine out of the box, so nothing extra is
+# needed. A self-signed cert is NOT trusted anywhere by default - not even on this build machine -
+# so if you're using one, first export its public portion to a .cer file and pass that path here.
+# It gets bundled into the package, and deploy-agent-portable.ps1 auto-trusts it on each target
+# machine at install time (it already runs elevated, so this needs no separate manual/GPO step).
 param(
     [Parameter(Mandatory=$true)] [string]$CertThumbprint,
     [Parameter(Mandatory=$true)] [Guid]$TenantId,
@@ -13,6 +21,7 @@ param(
     [Parameter(Mandatory=$true)] [string]$ChromeExtensionUpdateUrl,
     [Parameter(Mandatory=$true)] [string]$EdgeExtensionId,
     [Parameter(Mandatory=$true)] [string]$EdgeExtensionUpdateUrl,
+    [string]$RootCertPath,
     [string]$TimestampServer = "http://timestamp.digicert.com",
     [string]$OutputDirectory = "artifacts\portable-package"
 )
@@ -31,6 +40,19 @@ $cert = @(Get-ChildItem Cert:\CurrentUser\My, Cert:\LocalMachine\My -CodeSigning
     Where-Object { $_.Thumbprint -eq $CertThumbprint } | Select-Object -First 1
 if (-not $cert) {
     throw "No code-signing certificate with thumbprint '$CertThumbprint' was found in Cert:\CurrentUser\My or Cert:\LocalMachine\My. Import it (or connect the hardware token) first."
+}
+
+if ($RootCertPath) {
+    if (-not (Test-Path $RootCertPath)) { throw "RootCertPath '$RootCertPath' was not found." }
+
+    # A self-signed cert isn't trusted anywhere by default, including here - trust it on this build
+    # machine too, otherwise assert-production-signatures.ps1 below will fail on its own output.
+    Write-Host "Trusting self-signed certificate on this build machine..." -ForegroundColor Cyan
+    $rootCertToTrust = Get-PfxCertificate -FilePath $RootCertPath
+    $alreadyTrustedLocally = Get-ChildItem Cert:\LocalMachine\Root | Where-Object { $_.Thumbprint -eq $rootCertToTrust.Thumbprint }
+    if (-not $alreadyTrustedLocally) {
+        Import-Certificate -FilePath $RootCertPath -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
+    }
 }
 
 Write-Host "Building..." -ForegroundColor Cyan
@@ -64,6 +86,11 @@ foreach ($name in @(
 
 Copy-Item (Join-Path $PSScriptRoot "deploy-agent-portable.ps1") (Join-Path $outDir "deploy-agent-portable.ps1") -Force
 Copy-Item (Join-Path $PSScriptRoot "Install-CompanyDlp.bat") (Join-Path $outDir "Install-CompanyDlp.bat") -Force
+
+if ($RootCertPath) {
+    Copy-Item $RootCertPath (Join-Path $outDir "CompanyDlpCodeSigningRoot.cer") -Force
+    Write-Host "Bundled self-signed root certificate - deploy-agent-portable.ps1 will auto-trust it on each target machine." -ForegroundColor Cyan
+}
 
 $config = [ordered]@{
     tenantId                  = $TenantId.ToString()

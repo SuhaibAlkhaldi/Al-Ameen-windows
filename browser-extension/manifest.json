@@ -1,9 +1,9 @@
-{
+﻿{
     "manifest_version":  3,
     "name":  "Company DLP Browser Protection",
-    "version":  "3.0.7",
+    "version":  "3.0.9",
+    "key":  "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAytHaPnr4s++w9p1ItTSxZ833fD5VfDTbaKrDyKJyNM87CcX9KQVcL777OY6ALmMZR0xkMyqe7u6DT7xByVYo7g2XLzJRxeVHOcSg7LuIDY0mPxkE8VV4Ytn9RhLobOO/ujodihKFIrP9DgL1AvvotiQV+vZMnndtW+nkPVyJGnAFsXX7P/yr+GLHvOPQywKSEkpR/R/IInlz2toImy04zkziGcVXVgZtPGadq/yd0065AtNtC1VsGNug0FfSeJzbDRbnvqrzrQ/5FLTDStilSUB3WlBji5oww6x2DwQMFV0YtEQ+28UL8mAf+n1fWPW99Onn1KZ+yvp33eeL2Ous+QIDAQAB",
     "description":  "Blocks browser-wide file picker, drag/drop, paste and real File upload paths; transport enforcement is silent; the tiled watermark is rendered only by the Windows desktop overlay to prevent iframe duplication.",
-    "key":  "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs8D4fIl6GIPKwk9jq2o7zTxbVJ5OvI0iHC6iKvjx/OUVXoct648oE4q3lyskEl62lUqwlo8csGNNqkH/O4HeUYZko1A9yjZ0mJepl+5YKxxDvNn/55aKxN7j0scYMKzOgLlOF1qX6Flv5XDZ1sVLMCuE+hh/IEhIZRfYg3OVtRzLYhe22UXpkhltBa3Qs/TUgLsm7I0ebZv8X/qbuufUyhQhd4jRlZHDYqom6rbwYbx7wzlGqHi4s/pDgAV13nPunEvWZ0kyMtvBXgvI68tCZUzunosIC9C5DOjZRSCwpC5izOvJX0EWi64i+FThZsXW96da/jtPE9U7dkORguPwWQIDAQAB",
     "permissions":  [
                         "storage",
                         "nativeMessaging",
@@ -13,7 +13,7 @@
                         "scripting"
                     ],
     "host_permissions":  [
-                             "\u003call_urls\u003e"
+                             "<all_urls>"
                          ],
     "background":  {
                        "service_worker":  "service-worker.js"
@@ -21,7 +21,7 @@
     "content_scripts":  [
                             {
                                 "matches":  [
-                                                "\u003call_urls\u003e"
+                                                "<all_urls>"
                                             ],
                                 "js":  [
                                            "page-guard.js"
@@ -34,7 +34,7 @@
                             },
                             {
                                 "matches":  [
-                                                "\u003call_urls\u003e"
+                                                "<all_urls>"
                                             ],
                                 "js":  [
                                            "content.js"

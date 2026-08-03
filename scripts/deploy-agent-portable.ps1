@@ -7,14 +7,35 @@
 # certificate installed.
 #
 # Expected layout next to this script:
-#   .\publish\                 (already-built, already-signed artifacts\publish output)
-#   .\Scripts\                 (copies of the register-*.ps1 helper scripts)
-#   .\portable-config.json     (tenantId/backendBaseUrl/policy key/extension ids - filled in once
-#                                when the package was built)
+#   .\publish\                          (already-built, already-signed artifacts\publish output)
+#   .\Scripts\                          (copies of the register-*.ps1 helper scripts)
+#   .\portable-config.json              (tenantId/backendBaseUrl/policy key/extension ids - filled
+#                                         in once when the package was built)
+#   .\CompanyDlpCodeSigningRoot.cer     (OPTIONAL - only present if the package was built with a
+#                                         self-signed code-signing certificate instead of a real
+#                                         CA-issued one; see build-portable-agent-package.ps1's
+#                                         -RootCertPath. If present, this script trusts it on this
+#                                         machine automatically below, since it already runs
+#                                         elevated - no separate manual/GPO trust step needed.)
 param(
     [string]$ConfigPath = (Join-Path $PSScriptRoot "portable-config.json")
 )
 $ErrorActionPreference = "Stop"
+
+# Self-signed builds only: trust the bundled root certificate on this machine before checking
+# signatures below, so Get-AuthenticodeSignature can actually report "Valid" for it. Safe to skip
+# for a real CA-issued certificate (no .cer file is bundled in that case) and safe to re-run (skips
+# the import if this exact certificate is already trusted).
+$rootCertPath = Join-Path $PSScriptRoot "CompanyDlpCodeSigningRoot.cer"
+if (Test-Path $rootCertPath) {
+    Write-Host "Trusting bundled self-signed code-signing certificate on this machine..." -ForegroundColor Cyan
+    $rootCert = Get-PfxCertificate -FilePath $rootCertPath
+    $alreadyTrusted = Get-ChildItem Cert:\LocalMachine\Root | Where-Object { $_.Thumbprint -eq $rootCert.Thumbprint }
+    if (-not $alreadyTrusted) {
+        Import-Certificate -FilePath $rootCertPath -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
+    }
+    Write-Host "Certificate trusted." -ForegroundColor Green
+}
 
 if (-not (Test-Path $ConfigPath)) {
     throw "portable-config.json was not found next to this script. This flash drive was not built with scripts\build-portable-agent-package.ps1."
