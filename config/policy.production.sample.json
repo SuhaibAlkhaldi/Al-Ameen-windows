@@ -193,6 +193,6 @@
                                "backendPath":  "api/v1/agent/file-classification",
                                "timeoutSeconds":  30,
                                "maximumFileSizeBytes":  2147483648,
-                               "portalBaseUrl":  "https://ameen-dlp.com"
+                               "portalBaseUrl":  "https://admin.ameen-dlp.com"
                            }
 }
