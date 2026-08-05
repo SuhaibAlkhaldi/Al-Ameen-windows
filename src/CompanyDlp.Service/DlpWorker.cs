@@ -8,6 +8,9 @@ public sealed class DlpWorker(
     ProcessProtectionMonitor processMonitor,
     SoftwareProtectionMonitor softwareMonitor,
     WindowsAppControlAuditMonitor windowsAppControlAuditMonitor,
+    CliExecutionPolicyManager cliExecutionPolicyManager,
+    CliExecutionAuditMonitor cliExecutionAuditMonitor,
+    CliSensitiveCommandMonitor cliSensitiveCommandMonitor,
     PermissionLifecycleMonitor permissionLifecycleMonitor,
     SessionAgentSupervisor sessionAgentSupervisor,
     FileInventoryScanner fileInventoryScanner,
@@ -40,6 +43,8 @@ public sealed class DlpWorker(
                 await processMonitor.TickAsync(stoppingToken);
                 await softwareMonitor.TickAsync(stoppingToken);
                 await windowsAppControlAuditMonitor.TickAsync(stoppingToken);
+                await cliExecutionAuditMonitor.TickAsync(stoppingToken);
+                await cliSensitiveCommandMonitor.TickAsync(stoppingToken);
                 await permissionLifecycleMonitor.TickAsync(stoppingToken);
                 await sessionAgentSupervisor.TickAsync(stoppingToken);
 
@@ -54,6 +59,7 @@ public sealed class DlpWorker(
                     && now - lastPolicyApply >= TimeSpan.FromSeconds(Math.Max(5, policy.Runtime.PolicyReapplySeconds)))
                 {
                     await browserPolicyManager.ApplyMachinePoliciesAsync(stoppingToken);
+                    await cliExecutionPolicyManager.ApplyMachinePoliciesAsync(stoppingToken);
                     lastPolicyApply = now;
                 }
             }

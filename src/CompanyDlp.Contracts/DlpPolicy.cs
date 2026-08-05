@@ -12,6 +12,7 @@ public sealed class DlpPolicy
     public WatermarkPolicy Watermark { get; set; } = new();
     public NotificationPolicy Notifications { get; set; } = new();
     public SoftwarePolicy Software { get; set; } = new();
+    public CliPolicy Cli { get; set; } = new();
     public FileProtectionPolicy FileProtection { get; set; } = new();
     public FileClassificationPolicy FileClassification { get; set; } = new();
     public BackendPolicy Backend { get; set; } = new();
@@ -159,6 +160,36 @@ public sealed class SoftwarePolicy
     public bool RequireTrustedPublisher { get; set; }
     public List<string> AllowedPublishers { get; set; } = [];
     public List<string> AllowedSha256 { get; set; } = [];
+}
+
+// v1: AppLocker only. WDAC was deliberately rejected for CliExecute - it applies device-wide, not
+// per-user/per-group, which doesn't fit this policy's per-employee grant model the way AppLocker's
+// native per-user/group Deny rules do (see CliExecutionPolicyManager). "AuditOnly" pushes no
+// enforcement rule at all; only "AppLocker" pushes/withdraws the Deny rule.
+public static class CliEnforcementModes
+{
+    public const string AuditOnly = "AuditOnly";
+    public const string AppLocker = "AppLocker";
+}
+
+public sealed class CliPolicy
+{
+    public bool Enabled { get; set; } = true;
+    public string EnforcementMode { get; set; } = CliEnforcementModes.AuditOnly;
+
+    // Publisher-rule targets (see CliExecutionPolicyManager) - matched by Authenticode signer, not
+    // literal path, so a copy/rename of the same signed binary is still caught. pwsh.exe (PowerShell
+    // 7+) and powershell_ise.exe are included even though they may not be installed on every device;
+    // an AppLocker rule for a file that doesn't exist locally is simply inert, not an error.
+    public List<string> RestrictedExecutableNames { get; set; } =
+    [
+        "cmd.exe", "powershell.exe", "powershell_ise.exe", "pwsh.exe"
+    ];
+
+    // Independent of Enabled/EnforcementMode above by design - CliSensitiveCommand detection (see
+    // ActionKeys.CliSensitiveCommand) stays on even when CLI execution itself is allowed, same as
+    // the product's other "detect regardless of the gate decision" paths (integrity-hash mismatch).
+    public bool SensitiveCommandDetectionEnabled { get; set; } = true;
 }
 
 public sealed class FileProtectionPolicy

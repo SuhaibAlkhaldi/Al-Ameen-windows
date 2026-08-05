@@ -18,6 +18,12 @@ public sealed class DevelopmentSessionManager
 
     public bool HasUncleanSession => _registrySession.HasActiveSession || _nativeHostSession.HasBackup;
 
+    // Set by Start() whenever RegisterNativeHost() fails; null means registration succeeded (or
+    // hasn't been attempted yet). Only the five browser.* channels depend on native-host
+    // registration, so callers surface this as a non-fatal warning rather than treating it as a
+    // reason the whole test session failed to start.
+    public string? NativeHostWarning { get; private set; }
+
     public void RecoverIfNeeded()
     {
         if (!HasUncleanSession) return;
@@ -31,10 +37,28 @@ public sealed class DevelopmentSessionManager
             throw new InvalidOperationException("Temporary test sessions are only allowed in Development mode.");
         }
 
+        NativeHostWarning = null;
         try
         {
             _registrySession.Start(policy);
-            RegisterNativeHost();
+
+            // Native-messaging registration only ever affects the five browser.* channels
+            // (Download/Upload/DragDrop/FilePaste/ImagePaste) - it has nothing to do with
+            // Clipboard/USB/Screen/SoftwareInstall/FileEncrypt-Decrypt/Watermark/CLI. A missing
+            // COMPANY_DLP_NATIVE_HOST_EXE (only ever set by scripts/run-development.ps1 - a
+            // manually-launched CompanyDlp.Desktop.exe never has it) must not roll back the whole
+            // test session and delete the marker file _registrySession.Start() just created.
+            try
+            {
+                RegisterNativeHost();
+            }
+            catch (Exception nativeHostException)
+            {
+                NativeHostWarning =
+                    $"Browser native-messaging registration skipped: {nativeHostException.Message} " +
+                    "browser.* channels won't be testable this session; all other channels are unaffected.";
+            }
+
             _profileRoot = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "CompanyDlp", "Development", "BrowserProfiles", DateTime.Now.ToString("yyyyMMdd-HHmmss"));

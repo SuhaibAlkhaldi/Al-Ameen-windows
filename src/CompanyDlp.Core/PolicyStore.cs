@@ -53,6 +53,7 @@ public sealed class PolicyStore(
         target.Watermark = localSource.Watermark;
         target.Notifications = localSource.Notifications;
         target.Software = localSource.Software;
+        target.Cli = localSource.Cli;
         target.FileProtection = localSource.FileProtection;
         target.FileClassification = localSource.FileClassification;
         target.Backend = localSource.Backend;
@@ -224,7 +225,18 @@ public sealed class PolicyStore(
                 [ActionKeys.SoftwareExecuteUnapproved] = false,
                 [ActionKeys.FileEncrypt] = true,
                 [ActionKeys.FileDecrypt] = true,
-                [ActionKeys.AgentSession] = true
+                [ActionKeys.AgentSession] = true,
+
+                // Allowed by default (unlike the deny-by-default channels above): most employees
+                // genuinely need a terminal for their job, so CliExecute defaults to open-but-audited
+                // rather than locking every device out of cmd/PowerShell the moment this ships.
+                // Individual employees/devices can still be denied via a normal grant.
+                [ActionKeys.CliExecute] = true,
+
+                // Not a real block gate (see ActionKeys.CliSensitiveCommand) - detection always runs
+                // regardless of this value; kept "true"/Allow because there is genuinely no
+                // restriction tied to this key for the DefaultPermissions dictionary to express.
+                [ActionKeys.CliSensitiveCommand] = true
             }
         },
         SensitiveRules =
