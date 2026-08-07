@@ -43,3 +43,6 @@ signing/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Local-only AI model assets (large binaries, ~1.1GB - deployed separately, never committed)
+src/CompanyDlp.Service/AiModel/

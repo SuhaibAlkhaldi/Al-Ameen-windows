@@ -25,12 +25,22 @@ builder.Services.AddSingleton<ContentNormalizer>();
 builder.Services.AddSingleton<FragmentSessionTracker>();
 builder.Services.AddSingleton<ContentClassifier>();
 builder.Services.AddSingleton<BlockAllFileClassificationProvider>();
-builder.Services.AddSingleton<AiApiFileClassificationProvider>();
+builder.Services.AddSingleton(provider =>
+{
+    var baseDirectory = AppContext.BaseDirectory;
+    var onnxModelPath = provider.GetRequiredService<IConfiguration>()["LocalAi:OnnxModelPath"]
+        ?? Path.Combine(baseDirectory, "AiModel", "gliner_model.onnx");
+    var tokenizerModelPath = provider.GetRequiredService<IConfiguration>()["LocalAi:TokenizerModelPath"]
+        ?? Path.Combine(baseDirectory, "AiModel", "spm.model");
+    return new LocalEntityExtractor(onnxModelPath, tokenizerModelPath);
+});
+builder.Services.AddSingleton<LocalAiFileClassificationProvider>();
 builder.Services.AddSingleton<FileClassificationService>();
 builder.Services.AddSingleton<FileClassificationCache>();
 builder.Services.AddSingleton<FileClassificationStatusStore>();
 builder.Services.AddSingleton<FileInventoryScanner>();
 builder.Services.AddSingleton<FileClassificationStatusResolver>();
+builder.Services.AddSingleton<DictionaryRuleStore>();
 builder.Services.AddSingleton<SecurityEventFactory>();
 builder.Services.AddSingleton<AuditOutbox>();
 builder.Services.AddSingleton<AuditLogger>();
@@ -55,6 +65,7 @@ builder.Services.AddSingleton<PipeServer>();
 builder.Services.AddHostedService<DlpWorker>();
 builder.Services.AddHostedService<AuditSyncWorker>();
 builder.Services.AddHostedService<PolicySyncWorker>();
+builder.Services.AddHostedService<DictionaryRuleSyncWorker>();
 builder.Services.AddHostedService<HeartbeatWorker>();
 
 var host = builder.Build();

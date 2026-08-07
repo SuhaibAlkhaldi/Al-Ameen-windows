@@ -31,36 +31,11 @@ public sealed class BlockAllFileClassificationProvider : IFileClassificationProv
         });
 }
 
-public sealed class AiApiFileClassificationProvider(BackendApiClient backendApiClient) : IFileClassificationProvider
-{
-    public string Name => FileClassificationProviders.AiApi;
-
-    // Real, content-based classification needs the file's actual bytes - without them there is
-    // nothing to send the AI API, so this fails closed immediately rather than guessing from
-    // metadata alone (which is exactly the gap BlockAll already covers for that case).
-    public Task<FileClassificationResult> ClassifyAsync(
-        FileClassificationRequest request,
-        Stream? fileContent,
-        CancellationToken cancellationToken) =>
-        fileContent is null
-            ? Task.FromResult(new FileClassificationResult
-            {
-                RequestId = request.RequestId,
-                IsAllowed = false,
-                IsSensitive = true,
-                Classification = "ProviderUnavailable",
-                ReasonCode = "NoFileContentAvailableForAiClassification",
-                Provider = Name,
-                EvaluatedAtUtc = DateTimeOffset.UtcNow
-            })
-            : backendApiClient.ClassifyFileAsync(request, fileContent, cancellationToken);
-}
-
 public sealed class FileClassificationService(
     PolicyStore policyStore,
     AgentIdentityProvider identityProvider,
     BlockAllFileClassificationProvider blockAllProvider,
-    AiApiFileClassificationProvider aiApiProvider,
+    LocalAiFileClassificationProvider aiApiProvider,
     ILogger<FileClassificationService> logger)
 {
     public async Task<FileClassificationResult> ClassifyAsync(
