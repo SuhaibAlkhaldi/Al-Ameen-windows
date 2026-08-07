@@ -18,4 +18,9 @@
     <ProjectReference Include="..\CompanyDlp.Contracts\CompanyDlp.Contracts.csproj" />
     <ProjectReference Include="..\CompanyDlp.Core\CompanyDlp.Core.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Local entity-detection model assets (ONNX export + SentencePiece tokenizer) - large binaries,
+         deployed alongside the agent but never committed to source control (see .gitignore). -->
+    <None Include="AiModel\**" CopyToOutputDirectory="PreserveNewest" Condition="Exists('AiModel')" />
+  </ItemGroup>
 </Project>
