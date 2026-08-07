@@ -1,0 +1,210 @@
+{
+    "policyVersion":  "3.0-production-sample",
+    "enabled":  true,
+    "runtime":  {
+                    "mode":  "Production",
+                    "persistentProtection":  true,
+                    "policyReapplySeconds":  15,
+                    "auditDirectory":  "%ProgramData%\\CompanyDlp\\Audit",
+                    "keepSessionAgentRunning":  true,
+                    "sessionAgentPollSeconds":  5
+                },
+    "clipboard":  {
+                      "enabled":  true,
+                      "blockSensitiveText":  true,
+                      "clearClipboardOnBlock":  true,
+                      "fragmentWindowSeconds":  300,
+                      "maxFragments":  12
+                  },
+    "browser":  {
+                    "enabled":  true,
+                    "disableIncognito":  true,
+                    "disableGuestMode":  true,
+                    "disableBrowserScreenshots":  true,
+                    "blockDownloads":  false,
+                    "blockFileUpload":  true,
+                    "blockDragAndDrop":  true,
+                    "blockSensitiveCopy":  true,
+                    "blockSensitiveInputAndSubmit":  false,
+                    "showWatermark":  false,
+                    "blockUnapprovedExtensions":  false,
+                    "chromeExtensionId":  "REPLACE_AFTER_PUBLISHING_EXTENSION",
+                    "chromeExtensionUpdateUrl":  "REPLACE_WITH_CHROME_STORE_OR_SELF_HOSTED_UPDATE_URL",
+                    "edgeExtensionId":  "REPLACE_AFTER_PUBLISHING_EXTENSION",
+                    "edgeExtensionUpdateUrl":  "REPLACE_WITH_EDGE_STORE_OR_SELF_HOSTED_UPDATE_URL",
+                    "blockFilePaste":  true,
+                    "blockImagePaste":  true
+                },
+    "usb":  {
+                "enabled":  true,
+                "enforcementMode":  "Block",
+                "allowAnyKeyboardOrMouse":  true,
+                "trustDevicesPresentAtFirstRun":  false,
+                "pollSeconds":  2,
+                "lockWorkstationOnBlockedDevice":  false,
+                "denyCompositeDevicesWithForbiddenFunctions":  true,
+                "approvedHardwareIds":  [
+
+                                        ],
+                "approvedVidPid":  [
+
+                                   ],
+                "approvedSerialNumbers":  [
+
+                                          ]
+            },
+    "screen":  {
+                   "enabled":  true,
+                   "protectDlpWindowFromCapture":  true,
+                   "blockPrintScreenHotkey":  true,
+                   "blockWindowsSnippingShortcut":  true,
+                   "monitorKnownRecorderProcesses":  true,
+                   "monitorKnownScreenshotToolProcesses":  true,
+                   "recorderEnforcementMode":  "Block",
+                   "blockedRecorderProcessNames":  [
+                                               "obs64",
+                                               "obs32",
+                                               "ShareX",
+                                               "GameBar",
+                                               "CamtasiaRecorder",
+                                               "CamtasiaStudio",
+                                               "Bandicam",
+                                               "ScreenRecorder",
+                                               "Loom"
+                                           ],
+                   "blockedScreenshotToolProcessNames":  [
+                                               "SnippingTool",
+                                               "ScreenClippingHost"
+                                           ],
+                   "blockWindowsGameBarShortcuts":  true,
+                   "disableWindowsGameCapture":  true,
+                   "recorderPollMilliseconds":  250
+               },
+    "watermark":  {
+                      "enabled":  true,
+                      "opacity":  0.72,
+                      "fontSize":  15,
+                      "horizontalSpacing":  520,
+                      "verticalSpacing":  180,
+                      "prefix":  "",
+                      "includeUsername":  true,
+                      "includeMachineName":  true,
+                      "includeTime":  true,
+                      "includeSessionId":  false
+                  },
+    "notifications":  {
+                          "enabled":  true,
+                          "durationSeconds":  6,
+                          "showRuleName":  true,
+                          "showBrowserPageAlerts":  true,
+                          "duplicateWindowSeconds":  3,
+                          "position":  "TopRight"
+                      },
+    "sensitiveRules":  [
+                           {
+                               "id":  "client-secret-word",
+                               "name":  "Client-defined confidential word",
+                               "type":  "Keyword",
+                               "value":  "confidential",
+                               "pattern":  "",
+                               "enabled":  true,
+                               "caseSensitive":  false,
+                               "normalize":  false,
+                               "detectFragments":  false,
+                               "blockIndividualFragments":  false,
+                               "minimumBlockedFragmentLength":  3
+                           },
+                           {
+                               "id":  "any-email-address",
+                               "name":  "Block every email address",
+                               "type":  "AnyEmail",
+                               "value":  "",
+                               "pattern":  "",
+                               "enabled":  true,
+                               "caseSensitive":  false,
+                               "normalize":  false,
+                               "detectFragments":  true,
+                               "blockIndividualFragments":  false,
+                               "minimumBlockedFragmentLength":  3
+                           }
+                       ],
+    "software":  {
+                     "enabled":  true,
+                     "enforcementMode":  "WindowsAppControl",
+                     "blockMsi":  true,
+                     "blockMsixAppx":  true,
+                     "blockKnownInstallers":  true,
+                     "requireTrustedPublisher":  true,
+                     "allowedPublishers":  [
+
+                                           ],
+                     "allowedSha256":  [
+
+                                       ]
+                 },
+    "fileProtection":  {
+                           "enabled":  true,
+                           "keyProvider":  "BackendKms",
+                           "deletePlaintextAfterVerifiedEncryption":  true,
+                           "keepEncryptedFileAfterDecryption":  true,
+                           "maximumFileSizeBytes":  10737418240
+                       },
+    "cli":  {
+                "enabled":  true,
+                "enforcementMode":  "AppLocker",
+                "restrictedExecutableNames":  [
+                                                   "cmd.exe",
+                                                   "powershell.exe",
+                                                   "powershell_ise.exe",
+                                                   "pwsh.exe"
+                                               ],
+                "sensitiveCommandDetectionEnabled":  true
+            },
+    "backend":  {
+                    "enabled":  true,
+                    "tenantId":  "93107c02-bf7e-4aac-9955-d2a723fafc95",
+                    "mode":  "Production",
+                    "baseUrl":  "https://local-dlp-backend.test:7008",
+                    "requestTimeoutSeconds":  30,
+                    "auditBatchSize":  100,
+                    "auditSyncSeconds":  10,
+                    "policySyncSeconds":  60,
+                    "allowUnsignedDevelopmentPolicy":  false,
+                    "policySigningPublicKeyPem":  "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEOQPC2WD7l+Xp//VuZNEiO/7qjz/d\nsj0HARGFnKiy5ERBU/WGR6wZGZhz7hGwj+K6u8PzFhBQQaKctsvuaAsxDg==\n-----END PUBLIC KEY-----\n",
+                    "authenticationMode":  "DeviceBearerToken",
+                    "credentialName":  "agent-access-token",
+                    "heartbeatSeconds":  30
+                },
+    "permissions":  {
+                        "defaultPermissions":  {
+                                                   "screen.capture":  false,
+                                                   "screen.recording":  false,
+                                                   "clipboard.copy-sensitive":  false,
+                                                   "browser.upload":  false,
+                                                   "browser.drag-drop":  false,
+                                                   "browser.file-paste":  false,
+                                                   "browser.image-paste":  false,
+                                                   "usb.device-connect":  false,
+                                                   "usb.storage":  false,
+                                                   "usb.mobile-device":  false,
+                                                   "software.install":  false,
+                                                   "software.execute-unapproved":  false,
+                                                   "file.encrypt":  true,
+                                                   "file.decrypt":  true,
+                                                   "browser.download":  false
+                                               },
+                        "grants":  [
+
+                                   ]
+                    },
+    "fileClassification":  {
+                               "enabled":  true,
+                               "provider":  "AiApi",
+                               "failClosed":  true,
+                               "backendPath":  "api/v1/agent/file-classification",
+                               "timeoutSeconds":  30,
+                               "maximumFileSizeBytes":  2147483648,
+                               "portalBaseUrl":  "http://localhost:4200",
+                               "backgroundScanEnabled":  false
+                           }
+}

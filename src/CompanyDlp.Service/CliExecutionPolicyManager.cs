@@ -1,4 +1,6 @@
+using System.Runtime.InteropServices;
 using System.Security;
+using System.Security.Principal;
 using CompanyDlp.Contracts;
 using Microsoft.Win32;
 
@@ -118,7 +120,7 @@ public sealed class CliExecutionPolicyManager(
     // Policy store, which only auditpol.exe can write to, so this is the one place this feature shells
     // out to a system tool (same narrowly-scoped pattern UsbDeviceController already uses for
     // pnputil.exe - a fixed, absolute-pathed, non-cmd/non-PowerShell executable).
-    private static void EnableCommandAuditingPrerequisites()
+    private void EnableCommandAuditingPrerequisites()
     {
         using (var scriptBlockLoggingKey = Registry.LocalMachine.CreateSubKey(
             @"SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging", true))
@@ -192,7 +194,36 @@ public sealed class CliExecutionPolicyManager(
                 policy, ActionKeys.CliExecute, context, identityProvider.Get(), DateTimeOffset.UtcNow);
             if (!decision.IsAllowed)
             {
-                targetSid = context.UserSid;
+                // Local admins keep cmd.exe/PowerShell access even when the employee-facing policy for
+                // this device is Deny - an admin locked out of a shell on their own machine (including
+                // via a stale/incorrectly-scoped grant) has no realistic self-service recovery path, and
+                // AppLocker Deny rules give no separate "except elevated sessions" option of their own.
+                // Checked by live token/group membership (WindowsPrincipal), not a hardcoded SID, so it
+                // still applies correctly through domain group membership changes.
+                if (IsLocalAdministrator(context.WindowsSessionId))
+                {
+                    logger.LogInformation(
+                        "CLI execution Deny rule was evaluated for {Username} ({UserSid}) but not applied because the account is a local administrator.",
+                        context.Username, context.UserSid);
+
+                    await auditLogger.WriteAsync(new AuditEvent
+                    {
+                        ActionKey = ActionKeys.CliExecute,
+                        EventType = "CliEnforcementAdminExemption",
+                        Action = "cli-policy-admin-exemption",
+                        Method = nameof(ApplyAppLockerDenyRuleAsync),
+                        Result = "exempted",
+                        ReasonCode = "LocalAdministratorExempt",
+                        UserSid = context.UserSid,
+                        Username = context.Username,
+                        WindowsSessionId = context.WindowsSessionId,
+                        Details = "CLI execution Deny policy evaluated to Deny for this user but was not applied because the account is a member of BUILTIN\\Administrators.",
+                    }, cancellationToken);
+                }
+                else
+                {
+                    targetSid = context.UserSid;
+                }
             }
         }
 
@@ -207,6 +238,42 @@ public sealed class CliExecutionPolicyManager(
             try { File.Delete(policyXmlPath); } catch { /* best effort cleanup of a temp file */ }
         }
     }
+
+    // Queries a live token for the interactive console session rather than comparing against a
+    // hardcoded SID/name, so this reflects actual effective membership in BUILTIN\Administrators -
+    // including via nested domain group membership - the same way Windows itself would evaluate it.
+    // Deliberately conservative: any failure (no session, query failure, disposed identity) returns
+    // false so a broken admin-detection path fails toward "Deny still applies" rather than silently
+    // exempting an account that was never actually confirmed to be an administrator.
+    private static bool IsLocalAdministrator(int sessionId)
+    {
+        if (!OperatingSystem.IsWindows() || sessionId <= 0) return false;
+
+        if (!WTSQueryUserToken((uint)sessionId, out var token))
+            return false;
+
+        try
+        {
+            using var identity = new WindowsIdentity(token);
+            return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
+        }
+        catch
+        {
+            return false;
+        }
+        finally
+        {
+            CloseHandle(token);
+        }
+    }
+
+    [DllImport("wtsapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool WTSQueryUserToken(uint sessionId, out IntPtr token);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CloseHandle(IntPtr handle);
 
     // Standard AppLocker local-policy XML shape (the same document Set-AppLockerPolicy -XmlPolicy
     // expects) - one Allow-Everyone default rule plus one Path Deny rule per restricted executable,
@@ -236,7 +303,7 @@ public sealed class CliExecutionPolicyManager(
         """;
     }
 
-    private static void RunPowerShellSetAppLockerPolicy(string policyXmlPath)
+    private void RunPowerShellSetAppLockerPolicy(string policyXmlPath)
     {
         var powerShellPath = Path.Combine(
             Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe");
@@ -254,9 +321,19 @@ public sealed class CliExecutionPolicyManager(
             timeoutSeconds: 30);
     }
 
-    private static void RunSystemToolFireAndForget(string fileName, string arguments, int timeoutSeconds = 15)
+    // Every caller of this (auditpol.exe, Set-AppLockerPolicy) is a real, meaningful system change
+    // that fails silently and dangerously if nobody reads the child process's own outcome - the
+    // original fire-and-forget shape (start, WaitForExit, discard) is exactly what let a real
+    // Access-Denied failure from a non-elevated Service process vanish without a trace during this
+    // feature's own testing. Read stdout/stderr and check the exit code every time, and log the
+    // outcome - including on success - so "did this actually apply" is never a silent unknown again.
+    private void RunSystemToolFireAndForget(string fileName, string arguments, int timeoutSeconds = 15)
     {
-        if (!File.Exists(fileName)) return;
+        if (!File.Exists(fileName))
+        {
+            logger.LogError("Could not run system tool because it was not found: {FileName}", fileName);
+            return;
+        }
 
         using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
         {
@@ -268,6 +345,40 @@ public sealed class CliExecutionPolicyManager(
             RedirectStandardError = true
         });
 
-        process?.WaitForExit(timeoutSeconds * 1000);
+        if (process is null)
+        {
+            logger.LogError("Failed to start system tool {FileName} {Arguments}.", fileName, arguments);
+            return;
+        }
+
+        // Reads must start before the blocking WaitForExit below - otherwise a child process that
+        // writes enough output to fill the OS pipe buffer would deadlock (it blocks writing while
+        // this process blocks waiting for exit, and neither side is draining the pipe).
+        var stdOutTask = process.StandardOutput.ReadToEndAsync();
+        var stdErrTask = process.StandardError.ReadToEndAsync();
+        var exited = process.WaitForExit(timeoutSeconds * 1000);
+        var stdOut = stdOutTask.GetAwaiter().GetResult().Trim();
+        var stdErr = stdErrTask.GetAwaiter().GetResult().Trim();
+
+        if (!exited)
+        {
+            logger.LogError(
+                "System tool {FileName} {Arguments} did not exit within {TimeoutSeconds}s. Stdout: {Stdout} Stderr: {Stderr}",
+                fileName, arguments, timeoutSeconds, stdOut, stdErr);
+            return;
+        }
+
+        if (process.ExitCode != 0)
+        {
+            logger.LogError(
+                "System tool {FileName} {Arguments} exited with code {ExitCode}. Stdout: {Stdout} Stderr: {Stderr}",
+                fileName, arguments, process.ExitCode, stdOut, stdErr);
+        }
+        else
+        {
+            logger.LogInformation(
+                "System tool {FileName} {Arguments} completed successfully (exit code 0). Stdout: {Stdout} Stderr: {Stderr}",
+                fileName, arguments, stdOut, stdErr);
+        }
     }
 }

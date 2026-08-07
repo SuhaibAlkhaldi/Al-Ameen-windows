@@ -227,11 +227,12 @@ public sealed class PolicyStore(
                 [ActionKeys.FileDecrypt] = true,
                 [ActionKeys.AgentSession] = true,
 
-                // Allowed by default (unlike the deny-by-default channels above): most employees
-                // genuinely need a terminal for their job, so CliExecute defaults to open-but-audited
-                // rather than locking every device out of cmd/PowerShell the moment this ships.
-                // Individual employees/devices can still be denied via a normal grant.
-                [ActionKeys.CliExecute] = true,
+                // Deny by default like every other channel above: this product's real customer base
+                // (government, banks, hospitals, telecom) has most rank-and-file employees who don't
+                // need a terminal at all, only IT staff do. Admins grant CLI access to the
+                // employees/teams who need it via the same "Grant Access Directly" flow already used
+                // to grant exceptions for every other deny-by-default channel.
+                [ActionKeys.CliExecute] = false,
 
                 // Not a real block gate (see ActionKeys.CliSensitiveCommand) - detection always runs
                 // regardless of this value; kept "true"/Allow because there is genuinely no
