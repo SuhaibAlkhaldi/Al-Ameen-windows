@@ -28,10 +28,16 @@ public sealed partial class WindowsAppControlAuditMonitor(
 
         try
         {
+            // 3077/3033 are Enforced-mode block events (already handled below). 3076 is WDAC's own
+            // native Audit Mode signal - "this would have been blocked if Enforced" - the standard,
+            // Microsoft-recommended safe first step before ever switching a WDAC policy to Enforced.
+            // Listening for it here is prep only: nothing currently deploys or activates a WDAC policy
+            // (Audit or Enforced) from this repository - see docs/KNOWN_LIMITATIONS.md - so this event
+            // will simply never fire until an admin deploys one separately, exactly like 3077/3033 today.
             var query = new EventLogQuery(
                 "Microsoft-Windows-CodeIntegrity/Operational",
                 PathType.LogName,
-                "*[System[(EventID=3077 or EventID=3033) and TimeCreated[timediff(@SystemTime) <= 15000]]]")
+                "*[System[(EventID=3076 or EventID=3077 or EventID=3033) and TimeCreated[timediff(@SystemTime) <= 15000]]]")
             {
                 ReverseDirection = true,
                 TolerateQueryErrors = true
@@ -56,14 +62,22 @@ public sealed partial class WindowsAppControlAuditMonitor(
                 var policyId = PolicyIdRegex().Match(description).Groups[1].Value;
                 var context = interactiveUserContextProvider.GetActiveConsoleUser();
 
+                // 3076 (Audit Mode) never actually stopped anything - WDAC only evaluated what it
+                // WOULD have done. Result/EventType must say so plainly rather than reusing "blocked",
+                // since nothing was blocked and no enforcement behavior changes here.
                 await auditLogger.WriteAsync(new AuditEvent
                 {
                     ActionKey = ActionKeys.SoftwareExecuteUnapproved,
-                    EventType = "UnapprovedExecutionBlocked",
+                    EventType = record.Id == 3076 ? "UnapprovedExecutionAuditOnly" : "UnapprovedExecutionBlocked",
                     Action = "code-integrity-block",
                     Method = "WindowsAppControl",
-                    Result = "blocked",
-                    ReasonCode = record.Id == 3033 ? "EnterpriseSigningLevelNotMet" : "WindowsAppControlPolicyDenied",
+                    Result = record.Id == 3076 ? "would-have-blocked" : "blocked",
+                    ReasonCode = record.Id switch
+                    {
+                        3033 => "EnterpriseSigningLevelNotMet",
+                        3076 => "WindowsAppControlAuditModeWouldDeny",
+                        _ => "WindowsAppControlPolicyDenied"
+                    },
                     SourceProcessName = Path.GetFileName(sourcePath),
                     SourceProcessPath = sourcePath,
                     ResourceName = Path.GetFileName(blockedPath),
