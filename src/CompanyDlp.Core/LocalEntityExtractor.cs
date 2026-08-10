@@ -20,7 +20,10 @@ public sealed class LocalEntityExtractor : IDisposable
     private const int MaxWidth = 12;
     private const int MaxWords = 384;
     private const int MaxTextChars = 4_096;
-    private const float Threshold = 0.4f;
+    // 0.4 (the original Python reference value) missed real entities that scored just under it (e.g.
+    // a bare email address at 0.398) - 0.38 catches those near-misses without introducing false
+    // positives on plain, non-sensitive text (verified against several sanity-check sentences).
+    private const float Threshold = 0.38f;
 
     private const string EntToken = "<<ENT>>";
     private const string SepToken = "<<SEP>>";

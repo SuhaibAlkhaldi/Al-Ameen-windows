@@ -19,6 +19,7 @@ public sealed class FileInventoryScanner(
     FileClassificationService classificationService,
     FileClassificationCache cache,
     FileClassificationStatusStore statusStore,
+    DictionaryRuleStore dictionaryRuleStore,
     InteractiveUserContextProvider interactiveUserContextProvider,
     ILogger<FileInventoryScanner> logger)
 {
@@ -136,12 +137,20 @@ public sealed class FileInventoryScanner(
         // unreachable at the time) never counts as a genuine answer - skip it so the file gets a
         // real attempt on this tick instead of being stuck with a stale placeholder forever (e.g.
         // "Sensitive"/BlockAllUntilAiProviderAvailable from before the real provider was configured).
+        // A cache entry from an older dictionary-rules version is stale the same way: this exact
+        // content may classify differently under the admin's current rules, so it must not be reused
+        // as-is either - otherwise editing the Rules page would never affect already-seen content.
+        var currentRulesVersion = dictionaryRuleStore.Get().Version;
         var cached = cache.TryGet(hash);
-        if (cached is not null && !ProvisionalReasonCodes.Contains(cached.ReasonCode))
+        if (cached is not null && !ProvisionalReasonCodes.Contains(cached.ReasonCode) && cached.RulesVersion == currentRulesVersion)
         {
             _lastSeenWriteTimes[path] = info.LastWriteTimeUtc;
+            // LastScannedAtUtc means "when did the scanner last look at THIS file", not "when was
+            // this content first classified" - cache.TryGet can return a hit from a completely
+            // different, older file that happened to have identical content, so cached.ClassifiedAtUtc
+            // would show a stale/misleading timestamp here.
             statusStore.Set(new FileClassificationStatusEntry(
-                normalized, FileClassificationStatuses.UpToDate, hash, cached.ClassifiedAtUtc, cached.ReasonCode, DateTimeOffset.UtcNow));
+                normalized, FileClassificationStatuses.UpToDate, hash, DateTimeOffset.UtcNow, cached.ReasonCode, DateTimeOffset.UtcNow));
             return;
         }
 
@@ -165,7 +174,7 @@ public sealed class FileInventoryScanner(
             // the next tick once the file settles).
             await using var contentStream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             var result = await classificationService.ClassifyAsync(request, context, cancellationToken, contentStream);
-            cache.Set(new CachedFileClassification(hash, result.Classification, result.ReasonCode, DateTimeOffset.UtcNow));
+            cache.Set(new CachedFileClassification(hash, result.Classification, result.ReasonCode, DateTimeOffset.UtcNow, currentRulesVersion));
 
             if (FileClassificationReasonCodes.UnsupportedReasonCodes.Contains(result.ReasonCode))
             {

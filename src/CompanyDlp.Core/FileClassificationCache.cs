@@ -4,11 +4,17 @@ using Microsoft.Extensions.Logging;
 
 namespace CompanyDlp.Core;
 
+// RulesVersion is the DictionaryRuleStore version active when this content was classified - a cache
+// hit only counts if the admin's rules haven't changed since (see FileInventoryScanner), otherwise a
+// content hash classified under old rules would keep showing its stale verdict forever even after
+// the admin edits the rules. A deserialized older entry with no version defaults to 0, which never
+// matches a real version and forces a one-time re-classification - the correct behavior.
 public sealed record CachedFileClassification(
     string FileHash,
     string Classification,
     string ReasonCode,
-    DateTimeOffset ClassifiedAtUtc);
+    DateTimeOffset ClassifiedAtUtc,
+    long RulesVersion = 0);
 
 // Local, persisted hash -> classification lookup, written by the background inventory scanner
 // (CompanyDlp.Service) and read by PermissionEvaluator so that enforcement at upload/drag-drop
