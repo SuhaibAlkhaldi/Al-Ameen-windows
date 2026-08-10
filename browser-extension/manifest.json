@@ -1,8 +1,8 @@
 ﻿{
     "manifest_version":  3,
     "name":  "Company DLP Browser Protection",
-    "version":  "3.0.9",
-    "key":  "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAytHaPnr4s++w9p1ItTSxZ833fD5VfDTbaKrDyKJyNM87CcX9KQVcL777OY6ALmMZR0xkMyqe7u6DT7xByVYo7g2XLzJRxeVHOcSg7LuIDY0mPxkE8VV4Ytn9RhLobOO/ujodihKFIrP9DgL1AvvotiQV+vZMnndtW+nkPVyJGnAFsXX7P/yr+GLHvOPQywKSEkpR/R/IInlz2toImy04zkziGcVXVgZtPGadq/yd0065AtNtC1VsGNug0FfSeJzbDRbnvqrzrQ/5FLTDStilSUB3WlBji5oww6x2DwQMFV0YtEQ+28UL8mAf+n1fWPW99Onn1KZ+yvp33eeL2Ous+QIDAQAB",
+    "version":  "3.0.11",
+    "key":  "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxnXKtXEdJEiokip1x2XHHL0dlRQWX+xREOQdZ1cdBg+k5F6M5ynlTIXN+ce4HS6NXp19HL8p+3esJxYw1N/g6E0GC+iMXflTJr0gnoTnJGy6zNLn3fwzmJV4vDivvKxBGT818pHkC/DE2DKqTtYFC6c0S0hvX3L1FJFaCCBJC8ieSc+Lki3OvMSZmWQAesctI7uN8yUyg/1pMQ0FnSOT+yPxa11Ynr1cZUgnJCIG07y8vktNVGzI+KnbMJA95yJ+ekRmWrOe53BXKuveRZnCuUjyn8yTtj+6Wsatf20z+vWHQ0QBvgwfDUPG8bc3iuBvrufXKPFziz9ctyFGKjNh1wIDAQAB",
     "description":  "Blocks browser-wide file picker, drag/drop, paste and real File upload paths; transport enforcement is silent; the tiled watermark is rendered only by the Windows desktop overlay to prevent iframe duplication.",
     "permissions":  [
                         "storage",

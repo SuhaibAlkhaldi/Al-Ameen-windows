@@ -33,7 +33,7 @@ if (-not [Uri]::TryCreate($BackendBaseUrl, [UriKind]::Absolute, [ref]$backendUri
     throw "BackendBaseUrl must be a valid HTTPS URL."
 }
 if (-not (Test-Path $PolicySigningPublicKeyPemPath)) { throw "Policy signing public-key PEM file was not found." }
-$policySigningPublicKeyPem = Get-Content $PolicySigningPublicKeyPemPath -Raw
+$policySigningPublicKeyPem = [string](Get-Content $PolicySigningPublicKeyPemPath -Raw)
 if ($policySigningPublicKeyPem -notmatch "BEGIN PUBLIC KEY") { throw "Policy signing public-key PEM is invalid." }
 
 $cert = @(Get-ChildItem Cert:\CurrentUser\My, Cert:\LocalMachine\My -CodeSigningCert -ErrorAction SilentlyContinue) |
