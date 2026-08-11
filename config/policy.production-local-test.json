@@ -149,17 +149,28 @@
                            "keepEncryptedFileAfterDecryption":  true,
                            "maximumFileSizeBytes":  10737418240
                        },
+    "cli":  {
+                "enabled":  true,
+                "enforcementMode":  "AppLocker",
+                "restrictedExecutableNames":  [
+                                                   "cmd.exe",
+                                                   "powershell.exe",
+                                                   "powershell_ise.exe",
+                                                   "pwsh.exe"
+                                               ],
+                "sensitiveCommandDetectionEnabled":  true
+            },
     "backend":  {
                     "enabled":  true,
-                    "tenantId":  "00000000-0000-0000-0000-000000000000",
+                    "tenantId":  "93107c02-bf7e-4aac-9955-d2a723fafc95",
                     "mode":  "Production",
-                    "baseUrl":  "https://dlp-api.company.example",
+                    "baseUrl":  "https://local-dlp-backend.test:7008",
                     "requestTimeoutSeconds":  30,
                     "auditBatchSize":  100,
                     "auditSyncSeconds":  10,
                     "policySyncSeconds":  60,
                     "allowUnsignedDevelopmentPolicy":  false,
-                    "policySigningPublicKeyPem":  "REPLACE_WITH_ECDSA_PUBLIC_KEY_PEM",
+                    "policySigningPublicKeyPem":  "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEOQPC2WD7l+Xp//VuZNEiO/7qjz/d\nsj0HARGFnKiy5ERBU/WGR6wZGZhz7hGwj+K6u8PzFhBQQaKctsvuaAsxDg==\n-----END PUBLIC KEY-----\n",
                     "authenticationMode":  "DeviceBearerToken",
                     "credentialName":  "agent-access-token",
                     "heartbeatSeconds":  30
@@ -193,6 +204,7 @@
                                "backendPath":  "api/v1/agent/file-classification",
                                "timeoutSeconds":  30,
                                "maximumFileSizeBytes":  2147483648,
-                               "portalBaseUrl":  "https://admin.ameen-dlp.com"
+                               "portalBaseUrl":  "http://localhost:4200",
+                               "backgroundScanEnabled":  false
                            }
 }

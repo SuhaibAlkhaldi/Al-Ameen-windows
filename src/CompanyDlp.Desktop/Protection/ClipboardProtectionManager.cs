@@ -225,15 +225,14 @@ if (result is null)
 statusCallback(
     $"Clipboard classification result: IsSensitive={result.IsSensitive}, Matches={result.Matches.Count}, BlockSensitiveText={policy.BlockSensitiveText}");
 
-if (!policy.BlockSensitiveText)
+if (!ClipboardBlockDecision.ShouldBlock(policy.BlockSensitiveText, result.IsSensitive, result.AllowedByGrant))
 {
-    statusCallback("Clipboard sensitive copy is allowed by effective policy; not blocking.");
-    return;
-}
-
-if (!result.IsSensitive)
-{
-    statusCallback("Clipboard text is not sensitive; not blocking.");
+    var reason = !policy.BlockSensitiveText
+        ? "Clipboard sensitive copy is allowed by effective policy; not blocking."
+        : !result.IsSensitive
+            ? "Clipboard text is not sensitive; not blocking."
+            : "Clipboard sensitive copy is allowed by an approved permission grant; not blocking.";
+    statusCallback(reason);
     return;
 }
 

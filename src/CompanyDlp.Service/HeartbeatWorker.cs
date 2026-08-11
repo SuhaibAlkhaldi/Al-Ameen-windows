@@ -29,6 +29,7 @@ public sealed class HeartbeatWorker(
                         MachineName = identity.MachineName,
                         AgentVersion = identity.AgentVersion,
                         OsVersion = Environment.OSVersion.VersionString,
+                        OperatingSystemEdition = CliEnforcementHealthChecker.ReadEdition().DisplayName,
                         LastAppliedPolicyVersion = policyStore.CurrentRemoteVersion,
                         PendingAuditEventCount = status.PendingCount
                     }, stoppingToken);

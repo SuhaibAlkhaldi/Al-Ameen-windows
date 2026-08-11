@@ -52,6 +52,14 @@ public sealed class AgentHeartbeatRequest
     public string MachineName { get; set; } = "";
     public string AgentVersion { get; set; } = "1.0.0";
     public string OsVersion { get; set; } = "";
+
+    // Distinct from OsVersion (Environment.OSVersion.VersionString, e.g. "Microsoft Windows NT
+    // 10.0.26200.0" - never includes edition). This is the actual edition display name (e.g. "Windows
+    // 11 Enterprise"), read from the registry by CliEnforcementHealthChecker.ReadEdition() - the same
+    // read used to decide whether AppLocker enforcement is even possible on this device. Lets an admin
+    // see which devices support CliExecute enforcement without RDPing into each one individually.
+    public string OperatingSystemEdition { get; set; } = "";
+
     public DateTimeOffset SentAtUtc { get; set; } = DateTimeOffset.UtcNow;
     public long LastAppliedPolicyVersion { get; set; }
     public int PendingAuditEventCount { get; set; }

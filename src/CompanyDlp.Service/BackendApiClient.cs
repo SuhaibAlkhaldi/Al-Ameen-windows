@@ -28,15 +28,25 @@ public sealed class BackendApiClient(
             request,
             cancellationToken);
 
+    // userSid is the currently active interactive console user's SID (shared-device disambiguation on
+    // the backend - see AgentPolicyService.BuildGrantsForDeviceAsync). This is an outbound, UNSIGNED
+    // query parameter on a GET request the agent itself constructs - it has no relationship whatsoever
+    // to the signed AgentDlpPolicyDto/SignedPolicySnapshot returned below, which is still verified by
+    // PolicySnapshotValidator exactly as before this field existed.
     public async Task<SignedPolicySnapshot?> GetPolicyAsync(
         AgentIdentity identity,
         long currentVersion,
+        string? userSid,
         CancellationToken cancellationToken)
     {
         var backend = policyStore.Get().Backend;
         using var timeout = CreateTimeout(backend.RequestTimeoutSeconds, cancellationToken);
         var client = CreateClient(backend);
         var path = $"api/v1/agent/policy?tenantId={identity.TenantId:D}&deviceId={identity.DeviceId:D}&currentVersion={currentVersion}";
+        if (!string.IsNullOrWhiteSpace(userSid))
+        {
+            path += $"&userSid={Uri.EscapeDataString(userSid)}";
+        }
         using var request = new HttpRequestMessage(HttpMethod.Get, path);
         authenticator.Apply(request);
         using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);

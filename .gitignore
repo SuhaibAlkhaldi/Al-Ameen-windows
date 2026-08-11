@@ -40,6 +40,9 @@ appsettings.*.local.json
 # Extension signing material (private key + derived artifacts) - never commit
 signing/
 
+# Local-test-only secret material (keypairs, certs) - never commit
+secrets/
+
 # OS files
 .DS_Store
 Thumbs.db

@@ -181,9 +181,11 @@ public partial class MainWindow : Window
             StartTestButton.IsEnabled = false;
             StopTestButton.IsEnabled = true;
             TestSessionStatusText.Text = "Test session active. Browser policies are temporary and will be restored on Stop.";
+
+            string browserStatus;
             try
             {
-                BrowserStatusText.Text = _developmentSession.LaunchPreferredProtectedBrowser();
+                browserStatus = _developmentSession.LaunchPreferredProtectedBrowser();
                 ShowSecurityAlert(
                     "Protected browser opened",
                     "Use a browser profile where Company DLP extension v3.0.0 is enabled. Chrome/Edge can use browser-extension; Firefox uses firefox-extension. Reload pages opened before enabling the extension.",
@@ -191,8 +193,12 @@ public partial class MainWindow : Window
             }
             catch (Exception browserException)
             {
-                BrowserStatusText.Text = $"Test session started, but protected browser could not be opened: {browserException.Message}";
+                browserStatus = $"Test session started, but protected browser could not be opened: {browserException.Message}";
             }
+
+            BrowserStatusText.Text = _developmentSession.NativeHostWarning is null
+                ? browserStatus
+                : $"{_developmentSession.NativeHostWarning} {browserStatus}";
         }
         catch (Exception exception)
         {
@@ -419,13 +425,41 @@ public partial class MainWindow : Window
     // unconditionally, on the same 2-second cadence as the policy poll, and toggle the live
     // WatermarkManager immediately if the state actually changed instead of waiting for the next
     // policy change (which may never come) to re-run StartLocalProtection.
+    // A pipe failure (service restarting, crashed, or not running at all) must never collapse to
+    // the same outcome as a real, correctly-evaluated denial - that ambiguity is exactly what made
+    // a dead CompanyDlp.Service indistinguishable from "the grant isn't working" during diagnosis.
+    private enum WatermarkGrantStatus { Granted, Denied, ServiceUnreachable }
+
     private async Task RefreshWatermarkGrantAsync()
     {
         var response = await _pipeClient.SendAsync(
             DlpMessageTypes.EvaluatePermission,
             new PermissionEvaluationRequest { ActionKey = ActionKeys.WatermarkDisable });
-        var decision = response.Data?.Deserialize<PermissionDecision>(JsonDefaults.Options);
-        var granted = decision?.IsAllowed ?? false;
+
+        WatermarkGrantStatus status;
+        if (!response.Success)
+        {
+            status = WatermarkGrantStatus.ServiceUnreachable;
+        }
+        else
+        {
+            var decision = response.Data?.Deserialize<PermissionDecision>(JsonDefaults.Options);
+            status = (decision?.IsAllowed ?? false) ? WatermarkGrantStatus.Granted : WatermarkGrantStatus.Denied;
+        }
+
+        if (status == WatermarkGrantStatus.ServiceUnreachable)
+        {
+            // Keep the watermark in its last-known-good state - do not touch _watermarkDisableGranted
+            // or _watermarkManager, so a transient service restart can never flash the watermark on
+            // or off. Surface the outage on the same connectivity indicator RefreshStatusAsync
+            // already owns (StatusText/StatusIndicator/ServiceDetailsText) instead of a second one.
+            StatusText.Text = "DLP service is not connected";
+            StatusIndicator.Fill = WpfBrushes.IndianRed;
+            ServiceDetailsText.Text = $"Watermark grant check failed: {response.Message}";
+            return;
+        }
+
+        var granted = status == WatermarkGrantStatus.Granted;
         if (granted == _watermarkDisableGranted) return;
 
         _watermarkDisableGranted = granted;

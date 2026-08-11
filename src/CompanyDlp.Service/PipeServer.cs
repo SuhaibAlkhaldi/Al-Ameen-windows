@@ -1,5 +1,4 @@
 ﻿using System.IO.Pipes;
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
@@ -32,8 +31,7 @@ public sealed class PipeServer(
     ILogger<PipeServer> logger)
 {
     private readonly DateTimeOffset _startedAt = DateTimeOffset.UtcNow;
-    private readonly ConcurrentDictionary<Guid, DateTimeOffset> _recentMessageIds = new();
-    private static readonly TimeSpan MaximumMessageAge = TimeSpan.FromMinutes(5);
+    private readonly IpcReplayGuard _replayGuard = new();
 
     public Task RunAsync(CancellationToken cancellationToken) => AcceptLoopAsync(cancellationToken);
 
@@ -99,7 +97,10 @@ public sealed class PipeServer(
             security);
     }
 
-    private async Task HandleClientAsync(NamedPipeServerStream pipe, CancellationToken serverCancellationToken)
+    // internal (not private) solely so CompanyDlp.Tests (see InternalsVisibleTo above) can drive the
+    // real per-connection pipeline - line read, auth/replay checks, dispatch, response write - end to
+    // end over a real same-process named pipe pair, without needing a full external OS process.
+    internal async Task HandleClientAsync(NamedPipeServerStream pipe, CancellationToken serverCancellationToken)
     {
         await using (pipe)
         using (var reader = new StreamReader(pipe, Encoding.UTF8, false, 4096, leaveOpen: true))
@@ -149,39 +150,8 @@ public sealed class PipeServer(
     }
 
 
-    private bool TryAcceptMessage(DlpRequest request, out string failure)
-    {
-        failure = "";
-        var now = DateTimeOffset.UtcNow;
-        if (request.MessageId == Guid.Empty)
-        {
-            failure = "IPC messageId is required.";
-            return false;
-        }
-
-        if (request.SentAtUtc == default || (now - request.SentAtUtc).Duration() > MaximumMessageAge)
-        {
-            failure = "IPC message timestamp is outside the accepted window.";
-            return false;
-        }
-
-        if (!_recentMessageIds.TryAdd(request.MessageId, now))
-        {
-            failure = "Duplicate IPC message rejected.";
-            return false;
-        }
-
-        if (_recentMessageIds.Count > 4096)
-        {
-            var threshold = now - MaximumMessageAge - TimeSpan.FromMinutes(1);
-            foreach (var item in _recentMessageIds)
-            {
-                if (item.Value < threshold) _recentMessageIds.TryRemove(item.Key, out _);
-            }
-        }
-
-        return true;
-    }
+    private bool TryAcceptMessage(DlpRequest request, out string failure) =>
+        _replayGuard.TryAccept(request.MessageId, request.SentAtUtc, DateTimeOffset.UtcNow, out failure);
 
     private async Task<DlpResponse> HandleRequestAsync(
         DlpRequest request,
@@ -357,7 +327,9 @@ public sealed class PipeServer(
         }
     }
 
-    private static AuthenticatedPipeClient CaptureAuthenticatedClient(NamedPipeServerStream pipe, ClientContext supplied)
+    // internal (not private) so CompanyDlp.Tests can exercise the real Windows-identity impersonation
+    // path directly against a real connected pipe - see the HandleClientAsync comment above.
+    internal static AuthenticatedPipeClient CaptureAuthenticatedClient(NamedPipeServerStream pipe, ClientContext supplied)
     {
         supplied ??= new ClientContext();
         SafeAccessTokenHandle? duplicatedToken = null;
@@ -417,7 +389,7 @@ public sealed class PipeServer(
         }
     }
 
-    private sealed record AuthenticatedPipeClient(ClientContext Context, SafeAccessTokenHandle? AccessToken);
+    internal sealed record AuthenticatedPipeClient(ClientContext Context, SafeAccessTokenHandle? AccessToken);
 
     private enum SecurityImpersonationLevel
     {

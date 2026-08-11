@@ -1,3 +1,10 @@
+[HISTORICAL - already applied, do not re-run]
+This hotfix's ordering fix (show the alert immediately, audit in the background) is already live in
+browser-extension/service-worker.js (Chrome/Edge, since evolved further to manifest 3.0.7) and, as of
+the 2026 secondary-audit cleanup pass, has also been ported to firefox-extension/background-firefox.js
+(bumped to manifest 3.0.3). This folder is kept only as a record of how the Chrome/Edge fix was
+originally delivered - do not re-apply the .ps1 script here.
+
 Company DLP Browser Download Alert Hotfix v3
 =================================================
 

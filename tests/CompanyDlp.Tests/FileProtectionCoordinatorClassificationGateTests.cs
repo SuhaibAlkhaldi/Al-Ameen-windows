@@ -22,6 +22,7 @@ public sealed class FileProtectionCoordinatorClassificationGateTests : IDisposab
     private readonly AgentIdentityProvider _identityProvider;
     private readonly FileClassificationCache _classificationCache;
     private readonly EncryptedFileHashStore _hashStore;
+    private readonly LocalEntityExtractor _entityExtractor;
     private readonly FileProtectionCoordinator _coordinator;
     private readonly ClientContext _context = new()
     {
@@ -49,11 +50,18 @@ public sealed class FileProtectionCoordinatorClassificationGateTests : IDisposab
         var keyProtector = new FileKeyProtector(_policyStore, _identityProvider, dataProtector, backendApiClient: null!);
         var engine = new FileProtectionEngine(_policyStore, keyProtector);
 
-        var credentialStore = new AgentCredentialStore(_policyStore, dataProtector);
-        var authenticator = new BackendRequestAuthenticator(_policyStore, _identityProvider, credentialStore);
-        var backendApiClient = new BackendApiClient(new NoopHttpClientFactory(), _policyStore, authenticator, credentialStore);
         var blockAllProvider = new BlockAllFileClassificationProvider();
-        var aiApiProvider = new AiApiFileClassificationProvider(backendApiClient);
+        // Never actually invoked below: the default policy's FileClassification.Provider is BlockAll
+        // (see FileClassificationPolicy), so classification-service routing always picks
+        // blockAllProvider - this instance only needs to exist to satisfy the constructor. Points at
+        // the real deployed model assets (same relative layout Program.cs resolves at runtime) rather
+        // than stubbing LocalEntityExtractor, since it has no interface seam to fake through.
+        var aiModelDirectory = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "src", "CompanyDlp.Service", "AiModel");
+        _entityExtractor = new LocalEntityExtractor(
+            Path.Combine(aiModelDirectory, "gliner_model.onnx"),
+            Path.Combine(aiModelDirectory, "spm.model"));
+        var dictionaryRuleStore = new DictionaryRuleStore(_policyStore, NullLogger<DictionaryRuleStore>.Instance);
+        var aiApiProvider = new LocalAiFileClassificationProvider(_entityExtractor, dictionaryRuleStore);
         var classificationService = new FileClassificationService(
             _policyStore, _identityProvider, blockAllProvider, aiApiProvider, NullLogger<FileClassificationService>.Instance);
 
@@ -75,6 +83,7 @@ public sealed class FileProtectionCoordinatorClassificationGateTests : IDisposab
 
     public void Dispose()
     {
+        _entityExtractor.Dispose();
         try { Directory.Delete(_workDirectory, recursive: true); } catch { /* best-effort cleanup */ }
     }
 
@@ -293,10 +302,5 @@ public sealed class FileProtectionCoordinatorClassificationGateTests : IDisposab
             new FileProtectionRequest { Action = "decrypt", FilePath = encryptedPath }, _context, CancellationToken.None);
         Assert.True(allowed.Success, $"An ungated grant must still unlock a legacy file: {allowed.ErrorCode} {allowed.Message}");
         Assert.Equal("legacy content", await File.ReadAllTextAsync(allowed.OutputPath));
-    }
-
-    private sealed class NoopHttpClientFactory : System.Net.Http.IHttpClientFactory
-    {
-        public HttpClient CreateClient(string name) => new HttpClient();
     }
 }

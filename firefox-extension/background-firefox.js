@@ -217,6 +217,10 @@ api.downloads.onCreated.addListener(async (downloadItem) => {
   }
 
   await stopAndRemoveDownload(downloadItem.id);
-  await auditDownload(downloadItem, "blocked", decision);
-  await showDownloadBlockedAlert(downloadItem);
+
+  // Show the block alert immediately - don't let a slow audit call delay it.
+  void showDownloadBlockedAlert(downloadItem);
+
+  // Audit runs in the background and never delays the alert.
+  void auditDownload(downloadItem, "blocked", decision);
 });

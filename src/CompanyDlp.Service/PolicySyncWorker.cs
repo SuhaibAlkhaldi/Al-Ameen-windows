@@ -5,6 +5,7 @@ namespace CompanyDlp.Service;
 public sealed class PolicySyncWorker(
     PolicyStore policyStore,
     AgentIdentityProvider identityProvider,
+    InteractiveUserContextProvider interactiveUserContextProvider,
     BackendApiClient backendApiClient,
     PolicySnapshotValidator validator,
     AuditLogger auditLogger,
@@ -46,14 +47,15 @@ public sealed class PolicySyncWorker(
     private async Task SynchronizeOnceAsync(CancellationToken cancellationToken)
     {
         var identity = identityProvider.Get();
-        var snapshot = await backendApiClient.GetPolicyAsync(identity, policyStore.CurrentRemoteVersion, cancellationToken);
+        var userSid = interactiveUserContextProvider.GetActiveConsoleUser().UserSid;
+        var snapshot = await backendApiClient.GetPolicyAsync(identity, policyStore.CurrentRemoteVersion, userSid, cancellationToken);
         if (snapshot is null || snapshot.Version <= policyStore.CurrentRemoteVersion) return;
 
         if (!validator.TryValidate(snapshot, identity, trustedClock.GetSnapshot().UtcNow, out var failureReason))
         {
             await auditLogger.WriteAsync(new AuditEvent
             {
-                ActionKey = "policy.apply",
+                ActionKey = ActionKeys.PolicyApply,
                 EventType = "PolicyRejected",
                 Action = "remote-policy",
                 Result = "blocked",

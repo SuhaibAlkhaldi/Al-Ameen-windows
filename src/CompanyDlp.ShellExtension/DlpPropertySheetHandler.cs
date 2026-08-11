@@ -46,17 +46,22 @@ namespace CompanyDlp.ShellExtension
             }
             catch (System.Exception exception)
             {
-                // Temporarily writing the FULL exception (including inner exceptions, which is
-                // where a FileNotFoundException usually names the actual missing assembly) to a
-                // plain log file while diagnosing - the tab's own space is too cramped to show a
-                // full stack trace, and this avoids another round trip through Event Viewer.
-                try
+                // Full exception detail (including inner exceptions, which is where a
+                // FileNotFoundException usually names the actual missing assembly) is genuinely
+                // useful while diagnosing a broken install - the tab's own space is too cramped to
+                // show a full stack trace, and this avoids a round trip through Event Viewer - but
+                // it can include file paths, so it's off by default in shipped builds. Set
+                // COMPANY_DLP_SHELLEXTENSION_DIAGNOSTICS=1 in the environment to enable it.
+                if (System.Environment.GetEnvironmentVariable("COMPANY_DLP_SHELLEXTENSION_DIAGNOSTICS") == "1")
                 {
-                    System.IO.File.WriteAllText(
-                        System.IO.Path.Combine(System.IO.Path.GetTempPath(), "CompanyDlp.ShellExtension.error.log"),
-                        System.DateTime.Now + "\r\n" + exception);
+                    try
+                    {
+                        System.IO.File.WriteAllText(
+                            System.IO.Path.Combine(System.IO.Path.GetTempPath(), "CompanyDlp.ShellExtension.error.log"),
+                            System.DateTime.Now + "\r\n" + exception);
+                    }
+                    catch { }
                 }
-                catch { }
 
                 return new List<SharpPropertyPage> { new DlpPropertyPage(exception.GetType().Name + ": " + exception.Message) };
             }
