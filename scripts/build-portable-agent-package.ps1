@@ -106,4 +106,4 @@ $config | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $outDir "portable-con
 Write-Host ""
 Write-Host "Portable package ready: $outDir" -ForegroundColor Green
 Write-Host "Copy this whole folder to a flash drive. On any target machine: right-click Install-CompanyDlp.bat -> Run as administrator." -ForegroundColor Cyan
-Write-Host "It will ask for a one-time enrollment code partway through - have one ready (POST /api/v1/device-enrollment-tokens)." -ForegroundColor Cyan
+Write-Host "It will ask for a one-time enrollment code partway through (via a popup, not a hidden console prompt) - have one ready (POST /api/v1/device-enrollment-tokens)." -ForegroundColor Cyan

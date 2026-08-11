@@ -18,9 +18,195 @@
 #                                         machine automatically below, since it already runs
 #                                         elevated - no separate manual/GPO trust step needed.)
 param(
-    [string]$ConfigPath = (Join-Path $PSScriptRoot "portable-config.json")
+    [string]$ConfigPath = (Join-Path $PSScriptRoot "portable-config.json"),
+    # Optional: skip the interactive Read-Host prompt below by supplying the enrollment code
+    # up front (e.g. for scripted/repeated installs, or if Read-Host is ever unusable in a given
+    # console). Leave unset for the normal interactive flow.
+    [string]$EnrollmentCode
 )
 $ErrorActionPreference = "Stop"
+
+# Log everything to a file next to this script, and never let the window vanish silently on error -
+# Install-CompanyDlp.bat launches this in a *separate* elevated window with no -NoExit, so an
+# uncaught exception used to close that window before anyone could read what it said.
+$logPath = Join-Path $PSScriptRoot "install-log.txt"
+try { Start-Transcript -Path $logPath -Append -ErrorAction Stop | Out-Null } catch {
+    Write-Host "Warning: could not start transcript logging to $logPath ($($_.Exception.Message))." -ForegroundColor DarkYellow
+}
+
+trap {
+    Write-Host ""
+    Write-Host "INSTALLATION FAILED:" -ForegroundColor Red
+    Write-Host $_.Exception.Message -ForegroundColor Red
+    Write-Host $_.InvocationInfo.PositionMessage -ForegroundColor DarkRed
+    if ($_.ScriptStackTrace) { Write-Host $_.ScriptStackTrace -ForegroundColor DarkRed }
+    try { Stop-Transcript | Out-Null } catch {}
+    Write-Host ""
+    Write-Host "Full details were saved to: $logPath" -ForegroundColor Yellow
+    Read-Host "Press Enter to close this window"
+    exit 1
+}
+
+# GUI fallbacks for a non-technical employee running this by double-clicking Install-CompanyDlp.bat:
+# that .bat hands off to a *second*, separately-elevated PowerShell window via `Start-Process -Verb
+# RunAs`, which Windows frequently leaves unfocused/behind the original window after the UAC prompt -
+# a console Read-Host prompt in that second window is easy to never notice. A TopMost popup can't be
+# missed regardless of which window has focus.
+function Show-EnrollmentCodeDialog {
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = "Company DLP - Enrollment Code"
+    $form.Size = New-Object System.Drawing.Size(420, 170)
+    $form.StartPosition = "CenterScreen"
+    $form.FormBorderStyle = "FixedDialog"
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
+    $form.TopMost = $true
+
+    $label = New-Object System.Windows.Forms.Label
+    $label.Text = "This device needs a one-time enrollment code:"
+    $label.AutoSize = $true
+    $label.Location = New-Object System.Drawing.Point(15, 15)
+    $form.Controls.Add($label)
+
+    $textBox = New-Object System.Windows.Forms.TextBox
+    $textBox.Location = New-Object System.Drawing.Point(15, 45)
+    $textBox.Size = New-Object System.Drawing.Size(380, 25)
+    $form.Controls.Add($textBox)
+
+    $okButton = New-Object System.Windows.Forms.Button
+    $okButton.Text = "OK"
+    $okButton.Location = New-Object System.Drawing.Point(240, 85)
+    $okButton.Size = New-Object System.Drawing.Size(75, 30)
+    $okButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $form.Controls.Add($okButton)
+    $form.AcceptButton = $okButton
+
+    $cancelButton = New-Object System.Windows.Forms.Button
+    $cancelButton.Text = "Cancel"
+    $cancelButton.Location = New-Object System.Drawing.Point(320, 85)
+    $cancelButton.Size = New-Object System.Drawing.Size(75, 30)
+    $cancelButton.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $form.Controls.Add($cancelButton)
+    $form.CancelButton = $cancelButton
+
+    $form.Add_Shown({ $form.Activate(); $textBox.Focus() })
+    $result = $form.ShowDialog()
+
+    if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
+        return $textBox.Text.Trim()
+    }
+    return $null
+}
+
+function Show-InstallCompleteDialog {
+    param([string]$Message)
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+
+    # An invisible, offscreen, TopMost owner form makes the MessageBox come up on top regardless of
+    # which window currently has focus - a plain MessageBox.Show() with no owner can end up behind
+    # other windows the same way the old console prompt did.
+    $ownerForm = New-Object System.Windows.Forms.Form
+    $ownerForm.TopMost = $true
+    $ownerForm.ShowInTaskbar = $false
+    $ownerForm.StartPosition = "Manual"
+    $ownerForm.Location = New-Object System.Drawing.Point(-2000, -2000)
+    $ownerForm.Size = New-Object System.Drawing.Size(1, 1)
+    $ownerForm.Show()
+    [System.Windows.Forms.MessageBox]::Show($ownerForm, $Message, "Company DLP", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+    $ownerForm.Close()
+}
+
+# Reclaims ownership/ACLs under $Path, file by file - deliberately NOT `icacls $Path /grant ... /T`.
+# Confirmed live on a real failure (not theoretical), two compounding icacls quirks:
+#   1) /T batch recursion can silently no-op on a file that already has a fully empty ACL (0 access
+#      rules - happens after an interrupted previous run) while still printing "processed file: ..."
+#      for it and reporting zero failures overall.
+#   2) The (OI)(CI) inheritance flags are meant for containers (they control how children inherit) -
+#      applied directly to a plain FILE that already has an empty ACL, icacls silently drops the
+#      grant instead of applying it. Plain "F" with no inheritance flags works reliably on files.
+# Targeting each item directly - (OI)(CI)F for directories, plain F for files - fixed the same real
+# broken file every time it was tested, including after both quirks above were independently
+# confirmed. This is the actual confirmed root cause of the recurring Access Denied on this project,
+# not Windows Defender (checked directly: Get-MpThreatDetection/Get-MpThreat empty, Controlled
+# Folder Access disabled, no ASR rules, no relevant event log entries) and not a locked file handle
+# (the error is "Access is denied", not the distinct "being used by another process" message a real
+# handle conflict produces).
+function Repair-PermissionsRecursive {
+    param([Parameter(Mandatory = $true)] [string]$Path)
+    if (-not (Test-Path $Path)) { return }
+    takeown /F $Path /R /D Y | Out-Null
+    icacls $Path /grant "Administrators:(OI)(CI)F" /C | Out-Null
+    Get-ChildItem $Path -Recurse -Force | ForEach-Object {
+        if ($_.PSIsContainer) {
+            icacls $_.FullName /grant "Administrators:(OI)(CI)F" /C | Out-Null
+        } else {
+            icacls $_.FullName /grant "Administrators:F" /C | Out-Null
+        }
+    }
+}
+
+# Applies the final production ACL lockdown (e.g. SYSTEM/Administrators/Users on $installDir) the
+# same per-item way Repair-PermissionsRecursive above does, instead of a single bulk
+# `icacls $Path /inheritance:r /grant:r ... /T /C` call. Confirmed live as a real, separate instance
+# of the same icacls quirk documented above: a bulk /T recursive grant can silently no-op on
+# individual files, leaving them with an *empty* DACL (inheritance already severed by /inheritance:r,
+# and the explicit grant silently failed to apply) - which Windows treats as deny-everyone, not
+# allow-everyone. This is what caused "Access is denied" launching CompanyDlp.ShellExtension.
+# Register.exe right after this exact lockdown step ran on a freshly-copied installDir. $ContainerGrants
+# needs the (OI)(CI) inheritance flags (containers only); $LeafGrants must NOT have them (files).
+function Set-LockdownRecursive {
+    param(
+        [Parameter(Mandatory = $true)] [string]$Path,
+        [Parameter(Mandatory = $true)] [string[]]$ContainerGrants,
+        [Parameter(Mandatory = $true)] [string[]]$LeafGrants
+    )
+    if (-not (Test-Path $Path)) { return }
+    icacls $Path /inheritance:r /grant:r $ContainerGrants /C | Out-Null
+    Get-ChildItem $Path -Recurse -Force | ForEach-Object {
+        if ($_.PSIsContainer) {
+            icacls $_.FullName /inheritance:r /grant:r $ContainerGrants /C | Out-Null
+        } else {
+            icacls $_.FullName /inheritance:r /grant:r $LeafGrants /C | Out-Null
+        }
+    }
+}
+
+# Retries a filesystem write against $installDir/$dataDir, reclaiming ownership/ACLs between
+# attempts - covers any other transient cause (timing, a genuine third-party lock, etc.) on top of
+# the empty-ACL case Repair-PermissionsRecursive targets directly.
+function Invoke-WithRetry {
+    param(
+        [Parameter(Mandatory = $true)] [scriptblock]$Action,
+        [Parameter(Mandatory = $true)] [string]$Label,
+        [Parameter(Mandatory = $true)] [string]$HealPath,
+        [int]$MaxAttempts = 20,
+        [int]$DelayMilliseconds = 1500
+    )
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        Write-Host "  [$Label] attempt $attempt/$MaxAttempts..." -ForegroundColor DarkGray
+        try {
+            & $Action
+            if ($attempt -gt 1) { Write-Host "$Label succeeded on attempt $attempt." -ForegroundColor Green }
+            return
+        } catch {
+            if ($attempt -eq $MaxAttempts) {
+                Write-Host "$Label failed after $MaxAttempts attempts." -ForegroundColor Red
+                try {
+                    $mpStatus = Get-MpComputerStatus -ErrorAction Stop
+                    Write-Host "Windows Defender status at time of failure: RealTimeProtectionEnabled=$($mpStatus.RealTimeProtectionEnabled), AMRunningMode=$($mpStatus.AMRunningMode)" -ForegroundColor Yellow
+                } catch { }
+                throw
+            }
+            Write-Host "$Label attempt $attempt failed ($($_.Exception.Message)) - reclaiming permissions and retrying in $DelayMilliseconds ms..." -ForegroundColor DarkYellow
+            Repair-PermissionsRecursive -Path $HealPath
+            Start-Sleep -Milliseconds $DelayMilliseconds
+        }
+    }
+}
 
 # Self-signed builds only: trust the bundled root certificate on this machine before checking
 # signatures below, so Get-AuthenticodeSignature can actually report "Valid" for it. Safe to skip
@@ -74,21 +260,45 @@ if ($invalid) {
 }
 Write-Host "Signatures OK." -ForegroundColor Green
 
+# A flash drive copied from a network share or downloaded as a zip can carry a Zone.Identifier
+# Mark-of-the-Web tag on every file; Copy-Item below would propagate that tag onto every file it
+# writes into Program Files, making Windows treat each freshly-copied file as if it just came from
+# the internet. Stripping it from the source here (safe - doesn't touch file content or the
+# Authenticode signature just verified above) means the copies never carry it either.
+Write-Host "[step] Removing Mark-of-the-Web from source files (Unblock-File)..." -ForegroundColor DarkCyan
+Get-ChildItem $publishRoot -Recurse -File | Unblock-File -ErrorAction SilentlyContinue
+
 $installDir = Join-Path $env:ProgramFiles "CompanyDlp"
 $dataDir = Join-Path $env:ProgramData "CompanyDlp"
 
-Get-Process -Name @("CompanyDlp.Desktop", "CompanyDlp.NativeHost") -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Write-Host "[step] Stopping any running CompanyDlp.Desktop/NativeHost/Service processes..." -ForegroundColor DarkCyan
+Get-Process -Name @("CompanyDlp.Desktop", "CompanyDlp.NativeHost", "CompanyDlp.Service") -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
+Write-Host "[step] Checking for an existing CompanyDlp service..." -ForegroundColor DarkCyan
 if (Get-Service CompanyDlp -ErrorAction SilentlyContinue) {
     Stop-Service CompanyDlp -Force -ErrorAction SilentlyContinue
     sc.exe delete CompanyDlp | Out-Null
     Start-Sleep -Seconds 1
 }
 
-Remove-Item $installDir -Recurse -Force -ErrorAction SilentlyContinue
+# Self-heal a previous run's leftovers: line ~108 below locks $installDir/$dataDir down to
+# Users:RX, so a prior run that stopped partway (or was cleaned up by hand) can leave files an
+# admin can't overwrite without first reclaiming ownership - do that automatically here instead of
+# requiring manual takeown/icacls before every re-run.
+foreach ($existingPath in @($installDir, $dataDir)) {
+    Write-Host "[step] Repair-PermissionsRecursive -Path $existingPath ..." -ForegroundColor DarkCyan
+    Repair-PermissionsRecursive -Path $existingPath
+}
+
+Write-Host "[step] Remove-Item $installDir (via Invoke-WithRetry)..." -ForegroundColor DarkCyan
+Invoke-WithRetry -Label "Remove-Item ($installDir)" -HealPath $installDir -Action {
+    if (Test-Path $installDir) { Remove-Item $installDir -Recurse -Force -ErrorAction Stop }
+}
 New-Item $installDir -ItemType Directory -Force | Out-Null
 New-Item $dataDir -ItemType Directory -Force | Out-Null
-Copy-Item (Join-Path $publishRoot "*") $installDir -Recurse -Force
+Invoke-WithRetry -Label "Copy-Item (publish -> $installDir)" -HealPath $installDir -Action {
+    Copy-Item (Join-Path $publishRoot "*") $installDir -Recurse -Force -ErrorAction Stop
+}
 
 $policyTemplatePath = Join-Path $publishRoot "policy.production.sample.json"
 if (-not (Test-Path $policyTemplatePath)) {
@@ -103,30 +313,65 @@ $policy.backend.tenantId = $tenantId
 $policy.backend.baseUrl = $backendUri.AbsoluteUri.TrimEnd('/')
 $policy.backend.policySigningPublicKeyPem = $policySigningPublicKeyPem
 $policy.backend.authenticationMode = "DeviceBearerToken"
-$policy | ConvertTo-Json -Depth 20 | Set-Content (Join-Path $dataDir "policy.json") -Encoding UTF8
 
-icacls $installDir /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" "Users:(OI)(CI)RX" /T /C | Out-Null
-icacls $dataDir /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" /T /C | Out-Null
+Invoke-WithRetry -Label "Set-Content (policy.json)" -HealPath $dataDir -Action {
+    Write-Host "    [substep] Serializing policy object to JSON..." -ForegroundColor DarkGray
+    $policyJsonText = $policy | ConvertTo-Json -Depth 20
+    Write-Host "    [substep] Serialized ($($policyJsonText.Length) chars). Writing to disk..." -ForegroundColor DarkGray
+    [System.IO.File]::WriteAllText((Join-Path $dataDir "policy.json"), $policyJsonText, [System.Text.Encoding]::UTF8)
+    Write-Host "    [substep] Write complete." -ForegroundColor DarkGray
+}
+
+Write-Host "[step] icacls lockdown on $installDir (Users:RX)..." -ForegroundColor DarkCyan
+Set-LockdownRecursive -Path $installDir -ContainerGrants @("SYSTEM:(OI)(CI)F", "Administrators:(OI)(CI)F", "Users:(OI)(CI)RX") -LeafGrants @("SYSTEM:F", "Administrators:F", "Users:RX")
+Write-Host "[step] icacls lockdown on $dataDir..." -ForegroundColor DarkCyan
+Set-LockdownRecursive -Path $dataDir -ContainerGrants @("SYSTEM:(OI)(CI)F", "Administrators:(OI)(CI)F") -LeafGrants @("SYSTEM:F", "Administrators:F")
 
 $serviceExe = Join-Path $installDir "Service\CompanyDlp.Service.exe"
+Write-Host "[step] sc.exe create CompanyDlp..." -ForegroundColor DarkCyan
 sc.exe create CompanyDlp binPath= "`"$serviceExe`"" start= auto DisplayName= "Company DLP Service" | Out-Null
+Write-Host "[step] sc.exe description CompanyDlp..." -ForegroundColor DarkCyan
 sc.exe description CompanyDlp "Company endpoint data loss prevention service" | Out-Null
 
 $desktopExe = Join-Path $installDir "Desktop\CompanyDlp.Desktop.exe"
 
+Write-Host "[step] register-production-context-menu.ps1..." -ForegroundColor DarkCyan
 & (Join-Path $scriptsRoot "register-production-context-menu.ps1") -DesktopExe $desktopExe
+Write-Host "[step] register-shell-extension-production.ps1..." -ForegroundColor DarkCyan
 & (Join-Path $scriptsRoot "register-shell-extension-production.ps1") -RegisterExe (Join-Path $installDir "ShellExtension\CompanyDlp.ShellExtension.Register.exe")
+Write-Host "[step] register-native-host-production.ps1..." -ForegroundColor DarkCyan
 & (Join-Path $scriptsRoot "register-native-host-production.ps1") -NativeHostExe (Join-Path $installDir "NativeHost\CompanyDlp.NativeHost.exe") -ExtensionIds @($config.chromeExtensionId, $config.edgeExtensionId)
+Write-Host "[step] register-browser-force-install.ps1..." -ForegroundColor DarkCyan
 & (Join-Path $scriptsRoot "register-browser-force-install.ps1") -ChromeExtensionId $config.chromeExtensionId -ChromeExtensionUpdateUrl $config.chromeExtensionUpdateUrl -EdgeExtensionId $config.edgeExtensionId -EdgeExtensionUpdateUrl $config.edgeExtensionUpdateUrl
+Write-Host "[step] All registration scripts done." -ForegroundColor DarkCyan
 
+# [Environment]::SetEnvironmentVariable(..., "Machine") only writes to the registry - it does NOT
+# update this already-running PowerShell process's own environment block, so the `& $serviceExe
+# --enroll` call a few lines below (launched as a CHILD of this same process) would NOT see these
+# and would silently fall back to the exe's dev defaults (policy.development.json, localhost:7008) -
+# confirmed live: --enroll tried to reach https://localhost:7008 and loaded a dev policy from the
+# source repo path instead of the real production policy.json we just wrote to $dataDir. Start-Service
+# below is unaffected (Service Control Manager starts a genuinely fresh process that reads the
+# machine environment from the registry at that point), but --enroll needs the current-process $env:
+# set explicitly too.
+$policyJsonPath = Join-Path $dataDir "policy.json"
 [Environment]::SetEnvironmentVariable("COMPANY_DLP_MODE", "Production", "Machine")
-[Environment]::SetEnvironmentVariable("COMPANY_DLP_POLICY_PATH", (Join-Path $dataDir "policy.json"), "Machine")
+[Environment]::SetEnvironmentVariable("COMPANY_DLP_POLICY_PATH", $policyJsonPath, "Machine")
 [Environment]::SetEnvironmentVariable("COMPANY_DLP_SESSION_AGENT_EXE", $desktopExe, "Machine")
+$env:COMPANY_DLP_MODE = "Production"
+$env:COMPANY_DLP_POLICY_PATH = $policyJsonPath
+$env:COMPANY_DLP_SESSION_AGENT_EXE = $desktopExe
 
 Write-Host ""
-Write-Host "Files installed. This device now needs a one-time enrollment code (create one per device," -ForegroundColor Cyan
-Write-Host "or reuse a multi-use batch code, from the admin portal / POST /api/v1/device-enrollment-tokens)." -ForegroundColor Cyan
-$enrollmentCode = Read-Host "Enrollment code"
+if (-not [string]::IsNullOrWhiteSpace($EnrollmentCode)) {
+    Write-Host "Using enrollment code supplied via -EnrollmentCode." -ForegroundColor Green
+    $enrollmentCode = $EnrollmentCode
+} else {
+    Write-Host "Files installed. This device now needs a one-time enrollment code (create one per device," -ForegroundColor Cyan
+    Write-Host "or reuse a multi-use batch code, from the admin portal / POST /api/v1/device-enrollment-tokens)." -ForegroundColor Cyan
+    Write-Host "A popup window will now ask for it - it may appear behind this window." -ForegroundColor Cyan
+    $enrollmentCode = Show-EnrollmentCodeDialog
+}
 if ([string]::IsNullOrWhiteSpace($enrollmentCode)) { throw "An enrollment code is required to finish setup - re-run this script once you have one." }
 
 $env:COMPANY_DLP_ENROLLMENT_CODE = $enrollmentCode
@@ -141,3 +386,5 @@ Start-Service CompanyDlp
 Write-Host ""
 Write-Host "Company DLP agent installed and enrolled on this device." -ForegroundColor Green
 Write-Host "Disconnect all non-input external USB devices before first real use on a client image." -ForegroundColor Yellow
+Show-InstallCompleteDialog -Message "Installation complete - you're all set.`n`nDisconnect all non-input external USB devices before first real use on a client image."
+try { Stop-Transcript | Out-Null } catch {}
