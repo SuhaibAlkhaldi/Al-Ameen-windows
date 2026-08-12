@@ -79,13 +79,24 @@ foreach ($name in @(
     "register-production-context-menu.ps1",
     "register-shell-extension-production.ps1",
     "register-native-host-production.ps1",
-    "register-browser-force-install.ps1"
+    "register-browser-force-install.ps1",
+    # Uninstall-CompanyDlp.bat's dependency chain: uninstall-production.ps1 itself, plus every
+    # script it calls via $PSScriptRoot (unregister-production-context-menu.ps1,
+    # unregister-shell-extension.ps1, production-browser-policy-backup.ps1). All four must live
+    # together as siblings in this same folder for those $PSScriptRoot-relative calls to resolve -
+    # previously these were only in the source repo, so a device provisioned purely from the
+    # portable package (no repo access) had no way to cleanly uninstall.
+    "uninstall-production.ps1",
+    "unregister-production-context-menu.ps1",
+    "unregister-shell-extension.ps1",
+    "production-browser-policy-backup.ps1"
 )) {
     Copy-Item (Join-Path $PSScriptRoot $name) (Join-Path $scriptsOut $name) -Force
 }
 
 Copy-Item (Join-Path $PSScriptRoot "deploy-agent-portable.ps1") (Join-Path $outDir "deploy-agent-portable.ps1") -Force
 Copy-Item (Join-Path $PSScriptRoot "Install-CompanyDlp.bat") (Join-Path $outDir "Install-CompanyDlp.bat") -Force
+Copy-Item (Join-Path $PSScriptRoot "Uninstall-CompanyDlp.bat") (Join-Path $outDir "Uninstall-CompanyDlp.bat") -Force
 
 if ($RootCertPath) {
     Copy-Item $RootCertPath (Join-Path $outDir "CompanyDlpCodeSigningRoot.cer") -Force
