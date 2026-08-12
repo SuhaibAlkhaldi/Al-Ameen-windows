@@ -35,6 +35,17 @@
                     "blockFilePaste":  true,
                     "blockImagePaste":  true
                 },
+    "cli":  {
+                "enabled":  true,
+                "enforcementMode":  "AppLocker",
+                "restrictedExecutableNames":  [
+                                                   "cmd.exe",
+                                                   "powershell.exe",
+                                                   "powershell_ise.exe",
+                                                   "pwsh.exe"
+                                               ],
+                "sensitiveCommandDetectionEnabled":  true
+            },
     "usb":  {
                 "enabled":  true,
                 "enforcementMode":  "Block",
