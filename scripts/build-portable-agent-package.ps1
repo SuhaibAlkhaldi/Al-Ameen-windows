@@ -36,6 +36,22 @@ if (-not (Test-Path $PolicySigningPublicKeyPemPath)) { throw "Policy signing pub
 $policySigningPublicKeyPem = [string](Get-Content $PolicySigningPublicKeyPemPath -Raw)
 if ($policySigningPublicKeyPem -notmatch "BEGIN PUBLIC KEY") { throw "Policy signing public-key PEM is invalid." }
 
+# Build identity - the whole point of this block is "never mistake an old package for a new one"
+# again, so a missing/failed git lookup is a hard stop, not a silent "unknown" fallback: a package
+# built without a real commit hash is exactly the kind of untraceable artifact this exists to prevent.
+Write-Host "Determining build identity (git commit + timestamp)..." -ForegroundColor Cyan
+$buildCommit = (& git -C $root rev-parse --short HEAD 2>$null)
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($buildCommit)) {
+    throw "Could not determine the git commit for this build ('git -C `"$root`" rev-parse --short HEAD' failed). This package must be traceable to an exact commit - build from a git checkout (not a zip/export) with git.exe on PATH."
+}
+$buildCommit = $buildCommit.Trim()
+$gitStatusPorcelain = (& git -C $root status --porcelain 2>$null)
+if ($gitStatusPorcelain) {
+    Write-Host "WARNING: the working tree has uncommitted changes. This build will be stamped with commit $buildCommit, but its actual contents may not exactly match that commit in source control." -ForegroundColor Yellow
+}
+$buildTimestampUtc = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
+Write-Host "Build identity: $buildCommit built $buildTimestampUtc" -ForegroundColor Green
+
 $cert = @(Get-ChildItem Cert:\CurrentUser\My, Cert:\LocalMachine\My -CodeSigningCert -ErrorAction SilentlyContinue) |
     Where-Object { $_.Thumbprint -eq $CertThumbprint } | Select-Object -First 1
 if (-not $cert) {
@@ -111,10 +127,17 @@ $config = [ordered]@{
     chromeExtensionUpdateUrl   = $ChromeExtensionUpdateUrl
     edgeExtensionId             = $EdgeExtensionId
     edgeExtensionUpdateUrl      = $EdgeExtensionUpdateUrl
+    buildCommit                = $buildCommit
+    buildTimestampUtc          = $buildTimestampUtc
 }
 $config | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $outDir "portable-config.json") -Encoding UTF8
 
+# Plain-text, no-tooling-required build identity at the root of the package - so anyone (not just
+# someone who knows to open portable-config.json or run --version against an installed service) can
+# instantly tell which build a flash drive or extracted folder is, just by opening one .txt file.
+Set-Content -Path (Join-Path $outDir "VERSION.txt") -Value "$buildCommit built $buildTimestampUtc" -Encoding UTF8
+
 Write-Host ""
-Write-Host "Portable package ready: $outDir" -ForegroundColor Green
+Write-Host "Portable package ready: $outDir (build $buildCommit built $buildTimestampUtc)" -ForegroundColor Green
 Write-Host "Copy this whole folder to a flash drive. On any target machine: right-click Install-CompanyDlp.bat -> Run as administrator." -ForegroundColor Cyan
 Write-Host "It will ask for a one-time enrollment code partway through (via a popup, not a hidden console prompt) - have one ready (POST /api/v1/device-enrollment-tokens)." -ForegroundColor Cyan

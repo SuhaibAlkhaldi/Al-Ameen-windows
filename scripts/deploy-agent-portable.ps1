@@ -40,11 +40,68 @@ trap {
     Write-Host $_.Exception.Message -ForegroundColor Red
     Write-Host $_.InvocationInfo.PositionMessage -ForegroundColor DarkRed
     if ($_.ScriptStackTrace) { Write-Host $_.ScriptStackTrace -ForegroundColor DarkRed }
+    if ($progressForm -and -not $progressForm.IsDisposed) {
+        try { $progressForm.Close(); $progressForm.Dispose() } catch {}
+    }
     try { Stop-Transcript | Out-Null } catch {}
     Write-Host ""
     Write-Host "Full details were saved to: $logPath" -ForegroundColor Yellow
     Read-Host "Press Enter to close this window"
     exit 1
+}
+
+# Visible progress window - a non-technical employee double-clicking Install-CompanyDlp.bat sees a
+# console window scroll by (or, worse, appear to sit there doing nothing during a slow step like
+# Invoke-WithRetry or the per-file signature check below) with no indication the install is actually
+# alive. This is a TopMost, non-modal WinForms window with an indeterminate ("Marquee") progress bar -
+# indeterminate because install steps vary too much in duration to show real percentage - updated via
+# Set-InstallProgress at every phase below. It runs on the same thread as the rest of this script (no
+# background runspace); Set-InstallProgress calls [Windows.Forms.Application]::DoEvents() after every
+# text update specifically so the window keeps repainting/responding between synchronous install
+# steps, which is the standard, well-known way to keep a WinForms window alive from a single-threaded
+# script like this one without the complexity of a second runspace.
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+$progressForm = New-Object System.Windows.Forms.Form
+$progressForm.Text = "Company DLP - Installing"
+$progressForm.Size = New-Object System.Drawing.Size(440, 150)
+$progressForm.StartPosition = "CenterScreen"
+$progressForm.FormBorderStyle = "FixedDialog"
+$progressForm.MaximizeBox = $false
+$progressForm.MinimizeBox = $false
+$progressForm.ControlBox = $false
+$progressForm.TopMost = $true
+
+$progressLabel = New-Object System.Windows.Forms.Label
+$progressLabel.Text = "Starting installation..."
+$progressLabel.AutoSize = $false
+$progressLabel.Size = New-Object System.Drawing.Size(400, 40)
+$progressLabel.Location = New-Object System.Drawing.Point(15, 15)
+$progressForm.Controls.Add($progressLabel)
+
+$progressBar = New-Object System.Windows.Forms.ProgressBar
+$progressBar.Style = "Marquee"
+$progressBar.MarqueeAnimationSpeed = 30
+$progressBar.Location = New-Object System.Drawing.Point(15, 65)
+$progressBar.Size = New-Object System.Drawing.Size(400, 25)
+$progressForm.Controls.Add($progressBar)
+
+$progressForm.Show()
+$progressForm.Activate()
+[System.Windows.Forms.Application]::DoEvents()
+
+# Single choke point for "tell the employee what's happening right now" - updates both the console
+# (kept for install-log.txt via Start-Transcript above) and the visible progress window in one call,
+# so nothing below has to remember to do both separately.
+function Set-InstallProgress {
+    param([Parameter(Mandatory = $true)] [string]$Message)
+    Write-Host "[step] $Message" -ForegroundColor DarkCyan
+    if ($progressForm -and -not $progressForm.IsDisposed) {
+        $progressLabel.Text = $Message
+        $progressForm.Refresh()
+        [System.Windows.Forms.Application]::DoEvents()
+    }
 }
 
 # GUI fallbacks for a non-technical employee running this by double-clicking Install-CompanyDlp.bat:
@@ -214,7 +271,7 @@ function Invoke-WithRetry {
 # the import if this exact certificate is already trusted).
 $rootCertPath = Join-Path $PSScriptRoot "CompanyDlpCodeSigningRoot.cer"
 if (Test-Path $rootCertPath) {
-    Write-Host "Trusting bundled self-signed code-signing certificate on this machine..." -ForegroundColor Cyan
+    Set-InstallProgress "Trusting bundled security certificate..."
     $rootCert = Get-PfxCertificate -FilePath $rootCertPath
     $alreadyTrusted = Get-ChildItem Cert:\LocalMachine\Root | Where-Object { $_.Thumbprint -eq $rootCert.Thumbprint }
     if (-not $alreadyTrusted) {
@@ -227,6 +284,17 @@ if (-not (Test-Path $ConfigPath)) {
     throw "portable-config.json was not found next to this script. This flash drive was not built with scripts\build-portable-agent-package.ps1."
 }
 $config = Get-Content $ConfigPath -Raw | ConvertFrom-Json
+
+# Fail loudly, not silently, on a package built before build-identity stamping existed - an old-format
+# portable-config.json with no buildCommit/buildTimestampUtc must never be treated as "validated by
+# this script" the same way a current one is. Rebuild the package with the current
+# build-portable-agent-package.ps1 rather than trying to patch these fields in by hand.
+$hasBuildCommit = ($config.PSObject.Properties.Name -contains "buildCommit") -and -not [string]::IsNullOrWhiteSpace($config.buildCommit)
+$hasBuildTimestamp = ($config.PSObject.Properties.Name -contains "buildTimestampUtc") -and -not [string]::IsNullOrWhiteSpace($config.buildTimestampUtc)
+if (-not $hasBuildCommit -or -not $hasBuildTimestamp) {
+    throw "portable-config.json is missing buildCommit/buildTimestampUtc. This package was built with an older version of build-portable-agent-package.ps1 (before build-identity stamping was added) and cannot be verified as a known build. Rebuild the package with the current script before deploying it."
+}
+Set-InstallProgress "Deploying build $($config.buildCommit) built $($config.buildTimestampUtc)..."
 
 $tenantId = [Guid]$config.tenantId
 if ($tenantId -eq [Guid]::Empty) { throw "portable-config.json: tenantId must not be empty." }
@@ -245,7 +313,7 @@ if (-not (Test-Path $scriptsRoot)) { throw "Scripts\ folder was not found next t
 # Same signature check install-production.ps1 does - doesn't need the SDK, just Get-AuthenticodeSignature
 # (built into PowerShell), and confirms the binaries on this flash drive are still genuinely signed
 # and untampered before touching this machine at all.
-Write-Host "Checking binary signatures..." -ForegroundColor Cyan
+Set-InstallProgress "Checking binary signatures..."
 $files = Get-ChildItem $publishRoot -Recurse -File | Where-Object { $_.Extension -in @(".exe", ".dll") }
 if (-not $files) { throw "No production binaries were found under $publishRoot." }
 $invalid = foreach ($file in $files) {
@@ -265,16 +333,16 @@ Write-Host "Signatures OK." -ForegroundColor Green
 # writes into Program Files, making Windows treat each freshly-copied file as if it just came from
 # the internet. Stripping it from the source here (safe - doesn't touch file content or the
 # Authenticode signature just verified above) means the copies never carry it either.
-Write-Host "[step] Removing Mark-of-the-Web from source files (Unblock-File)..." -ForegroundColor DarkCyan
+Set-InstallProgress "Removing Mark-of-the-Web from source files..."
 Get-ChildItem $publishRoot -Recurse -File | Unblock-File -ErrorAction SilentlyContinue
 
 $installDir = Join-Path $env:ProgramFiles "CompanyDlp"
 $dataDir = Join-Path $env:ProgramData "CompanyDlp"
 
-Write-Host "[step] Stopping any running CompanyDlp.Desktop/NativeHost/Service processes..." -ForegroundColor DarkCyan
+Set-InstallProgress "Stopping any running Company DLP processes..."
 Get-Process -Name @("CompanyDlp.Desktop", "CompanyDlp.NativeHost", "CompanyDlp.Service") -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
-Write-Host "[step] Checking for an existing CompanyDlp service..." -ForegroundColor DarkCyan
+Set-InstallProgress "Checking for a previous installation..."
 if (Get-Service CompanyDlp -ErrorAction SilentlyContinue) {
     Stop-Service CompanyDlp -Force -ErrorAction SilentlyContinue
     sc.exe delete CompanyDlp | Out-Null
@@ -286,16 +354,17 @@ if (Get-Service CompanyDlp -ErrorAction SilentlyContinue) {
 # admin can't overwrite without first reclaiming ownership - do that automatically here instead of
 # requiring manual takeown/icacls before every re-run.
 foreach ($existingPath in @($installDir, $dataDir)) {
-    Write-Host "[step] Repair-PermissionsRecursive -Path $existingPath ..." -ForegroundColor DarkCyan
+    Set-InstallProgress "Cleaning up files from a previous install..."
     Repair-PermissionsRecursive -Path $existingPath
 }
 
-Write-Host "[step] Remove-Item $installDir (via Invoke-WithRetry)..." -ForegroundColor DarkCyan
+Set-InstallProgress "Removing the previous installation..."
 Invoke-WithRetry -Label "Remove-Item ($installDir)" -HealPath $installDir -Action {
     if (Test-Path $installDir) { Remove-Item $installDir -Recurse -Force -ErrorAction Stop }
 }
 New-Item $installDir -ItemType Directory -Force | Out-Null
 New-Item $dataDir -ItemType Directory -Force | Out-Null
+Set-InstallProgress "Copying program files..."
 Invoke-WithRetry -Label "Copy-Item (publish -> $installDir)" -HealPath $installDir -Action {
     Copy-Item (Join-Path $publishRoot "*") $installDir -Recurse -Force -ErrorAction Stop
 }
@@ -314,6 +383,15 @@ $policy.backend.baseUrl = $backendUri.AbsoluteUri.TrimEnd('/')
 $policy.backend.policySigningPublicKeyPem = $policySigningPublicKeyPem
 $policy.backend.authenticationMode = "DeviceBearerToken"
 
+# Add-Member -Force (not dot-assignment) so this still works even against a policy.production.sample.json
+# template that predates these two fields - dot-assignment throws on a PSCustomObject property that
+# doesn't already exist, and this script must never fail to deploy just because the bundled template is
+# older than expected. This is how CompanyDlp.Service.exe --version and its startup log line find out
+# which build is actually running (see BuildIdentity.cs).
+$policy.backend | Add-Member -NotePropertyName "buildCommit" -NotePropertyValue $config.buildCommit -Force
+$policy.backend | Add-Member -NotePropertyName "buildTimestampUtc" -NotePropertyValue $config.buildTimestampUtc -Force
+
+Set-InstallProgress "Writing device policy..."
 Invoke-WithRetry -Label "Set-Content (policy.json)" -HealPath $dataDir -Action {
     Write-Host "    [substep] Serializing policy object to JSON..." -ForegroundColor DarkGray
     $policyJsonText = $policy | ConvertTo-Json -Depth 20
@@ -322,28 +400,25 @@ Invoke-WithRetry -Label "Set-Content (policy.json)" -HealPath $dataDir -Action {
     Write-Host "    [substep] Write complete." -ForegroundColor DarkGray
 }
 
-Write-Host "[step] icacls lockdown on $installDir (Users:RX)..." -ForegroundColor DarkCyan
+Set-InstallProgress "Locking down file permissions..."
 Set-LockdownRecursive -Path $installDir -ContainerGrants @("SYSTEM:(OI)(CI)F", "Administrators:(OI)(CI)F", "Users:(OI)(CI)RX") -LeafGrants @("SYSTEM:F", "Administrators:F", "Users:RX")
-Write-Host "[step] icacls lockdown on $dataDir..." -ForegroundColor DarkCyan
 Set-LockdownRecursive -Path $dataDir -ContainerGrants @("SYSTEM:(OI)(CI)F", "Administrators:(OI)(CI)F") -LeafGrants @("SYSTEM:F", "Administrators:F")
 
 $serviceExe = Join-Path $installDir "Service\CompanyDlp.Service.exe"
-Write-Host "[step] sc.exe create CompanyDlp..." -ForegroundColor DarkCyan
+Set-InstallProgress "Registering the background service..."
 sc.exe create CompanyDlp binPath= "`"$serviceExe`"" start= auto DisplayName= "Company DLP Service" | Out-Null
-Write-Host "[step] sc.exe description CompanyDlp..." -ForegroundColor DarkCyan
 sc.exe description CompanyDlp "Company endpoint data loss prevention service" | Out-Null
 
 $desktopExe = Join-Path $installDir "Desktop\CompanyDlp.Desktop.exe"
 
-Write-Host "[step] register-production-context-menu.ps1..." -ForegroundColor DarkCyan
+Set-InstallProgress "Registering right-click menu integration..."
 & (Join-Path $scriptsRoot "register-production-context-menu.ps1") -DesktopExe $desktopExe
-Write-Host "[step] register-shell-extension-production.ps1..." -ForegroundColor DarkCyan
+Set-InstallProgress "Registering shell extension..."
 & (Join-Path $scriptsRoot "register-shell-extension-production.ps1") -RegisterExe (Join-Path $installDir "ShellExtension\CompanyDlp.ShellExtension.Register.exe")
-Write-Host "[step] register-native-host-production.ps1..." -ForegroundColor DarkCyan
+Set-InstallProgress "Registering browser integration..."
 & (Join-Path $scriptsRoot "register-native-host-production.ps1") -NativeHostExe (Join-Path $installDir "NativeHost\CompanyDlp.NativeHost.exe") -ExtensionIds @($config.chromeExtensionId, $config.edgeExtensionId)
-Write-Host "[step] register-browser-force-install.ps1..." -ForegroundColor DarkCyan
+Set-InstallProgress "Registering browser extension force-install policy..."
 & (Join-Path $scriptsRoot "register-browser-force-install.ps1") -ChromeExtensionId $config.chromeExtensionId -ChromeExtensionUpdateUrl $config.chromeExtensionUpdateUrl -EdgeExtensionId $config.edgeExtensionId -EdgeExtensionUpdateUrl $config.edgeExtensionUpdateUrl
-Write-Host "[step] All registration scripts done." -ForegroundColor DarkCyan
 
 # [Environment]::SetEnvironmentVariable(..., "Machine") only writes to the registry - it does NOT
 # update this already-running PowerShell process's own environment block, so the `& $serviceExe
@@ -370,10 +445,17 @@ if (-not [string]::IsNullOrWhiteSpace($EnrollmentCode)) {
     Write-Host "Files installed. This device now needs a one-time enrollment code (create one per device," -ForegroundColor Cyan
     Write-Host "or reuse a multi-use batch code, from the admin portal / POST /api/v1/device-enrollment-tokens)." -ForegroundColor Cyan
     Write-Host "A popup window will now ask for it - it may appear behind this window." -ForegroundColor Cyan
+    # Hidden (not disposed) while the enrollment-code dialog is up - both are TopMost, and the
+    # progress window sitting behind/beside the modal input dialog is just visual clutter with
+    # nothing actually happening while it waits on Read-Host-equivalent user input. Shown again right
+    # after for the remaining enroll/start-service steps.
+    if (-not $progressForm.IsDisposed) { $progressForm.Hide() }
     $enrollmentCode = Show-EnrollmentCodeDialog
+    if (-not $progressForm.IsDisposed) { $progressForm.Show(); $progressForm.Activate() }
 }
 if ([string]::IsNullOrWhiteSpace($enrollmentCode)) { throw "An enrollment code is required to finish setup - re-run this script once you have one." }
 
+Set-InstallProgress "Enrolling this device..."
 $env:COMPANY_DLP_ENROLLMENT_CODE = $enrollmentCode
 try {
     & $serviceExe --enroll
@@ -382,9 +464,11 @@ try {
     $enrollmentCode = $null
 }
 
+Set-InstallProgress "Starting the service..."
 Start-Service CompanyDlp
 Write-Host ""
 Write-Host "Company DLP agent installed and enrolled on this device." -ForegroundColor Green
 Write-Host "Disconnect all non-input external USB devices before first real use on a client image." -ForegroundColor Yellow
+if (-not $progressForm.IsDisposed) { $progressForm.Close(); $progressForm.Dispose() }
 Show-InstallCompleteDialog -Message "Installation complete - you're all set.`n`nDisconnect all non-input external USB devices before first real use on a client image."
 try { Stop-Transcript | Out-Null } catch {}

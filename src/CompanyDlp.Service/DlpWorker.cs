@@ -19,7 +19,9 @@ public sealed class DlpWorker(
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var policy = policyStore.Reload();
-        logger.LogInformation("Company DLP started in {Mode} mode using {PolicyPath}", policy.Runtime.Mode, policyStore.PolicyPath);
+        logger.LogInformation(
+            "Company DLP started in {Mode} mode using {PolicyPath} (build {BuildIdentity})",
+            policy.Runtime.Mode, policyStore.PolicyPath, BuildIdentity.Describe(policy));
 
         var pipeTask = pipeServer.RunAsync(stoppingToken);
         var lastPolicyApply = DateTimeOffset.MinValue;

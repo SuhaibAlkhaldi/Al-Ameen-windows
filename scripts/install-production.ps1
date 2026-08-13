@@ -21,6 +21,17 @@ $root = Split-Path -Parent $PSScriptRoot
 $installDir = Join-Path $env:ProgramFiles "CompanyDlp"
 $dataDir = Join-Path $env:ProgramData "CompanyDlp"
 
+# Build identity (same requirement/rationale as build-portable-agent-package.ps1: an install must
+# always be traceable to an exact commit, never "unknown" - fail loudly rather than silently installing
+# an untraceable build).
+$buildCommit = (& git -C $root rev-parse --short HEAD 2>$null)
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($buildCommit)) {
+    throw "Could not determine the git commit for this build ('git -C `"$root`" rev-parse --short HEAD' failed). Install from a git checkout (not a zip/export) with git.exe on PATH."
+}
+$buildCommit = $buildCommit.Trim()
+$buildTimestampUtc = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
+Write-Host "Installing build $buildCommit built $buildTimestampUtc." -ForegroundColor Cyan
+
 Get-Process -Name @("CompanyDlp.Desktop", "CompanyDlp.NativeHost") -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
 & (Join-Path $PSScriptRoot "publish.ps1")
@@ -47,6 +58,12 @@ $policy.backend.tenantId = $TenantId
 $policy.backend.baseUrl = $backendUri.AbsoluteUri.TrimEnd('/')
 $policy.backend.policySigningPublicKeyPem = $policySigningPublicKeyPem
 $policy.backend.authenticationMode = "DeviceBearerToken"
+
+# Add-Member -Force (not dot-assignment) so this still works even against a policy.production.sample.json
+# template that predates these two fields - see deploy-agent-portable.ps1 for the same pattern.
+$policy.backend | Add-Member -NotePropertyName "buildCommit" -NotePropertyValue $buildCommit -Force
+$policy.backend | Add-Member -NotePropertyName "buildTimestampUtc" -NotePropertyValue $buildTimestampUtc -Force
+
 $policy | ConvertTo-Json -Depth 20 | Set-Content (Join-Path $dataDir "policy.json") -Encoding UTF8
 
 icacls $installDir /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" "Users:(OI)(CI)RX" /T /C | Out-Null

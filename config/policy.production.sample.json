@@ -174,7 +174,9 @@
                     "policySigningPublicKeyPem":  "REPLACE_WITH_ECDSA_PUBLIC_KEY_PEM",
                     "authenticationMode":  "DeviceBearerToken",
                     "credentialName":  "agent-access-token",
-                    "heartbeatSeconds":  30
+                    "heartbeatSeconds":  30,
+                    "buildCommit":  "",
+                    "buildTimestampUtc":  ""
                 },
     "permissions":  {
                         "defaultPermissions":  {

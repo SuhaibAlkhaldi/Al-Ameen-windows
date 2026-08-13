@@ -174,7 +174,9 @@
                     "policySigningPublicKeyPem":  "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEOQPC2WD7l+Xp//VuZNEiO/7qjz/d\nsj0HARGFnKiy5ERBU/WGR6wZGZhz7hGwj+K6u8PzFhBQQaKctsvuaAsxDg==\n-----END PUBLIC KEY-----\n",
                     "authenticationMode":  "DeviceBearerToken",
                     "credentialName":  "agent-access-token",
-                    "heartbeatSeconds":  30
+                    "heartbeatSeconds":  30,
+                    "buildCommit":  "",
+                    "buildTimestampUtc":  ""
                 },
     "permissions":  {
                         "defaultPermissions":  {
