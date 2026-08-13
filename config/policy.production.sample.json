@@ -42,7 +42,8 @@
                                                    "cmd.exe",
                                                    "powershell.exe",
                                                    "powershell_ise.exe",
-                                                   "pwsh.exe"
+                                                   "pwsh.exe",
+                                                   "wt.exe"
                                                ],
                 "sensitiveCommandDetectionEnabled":  true
             },

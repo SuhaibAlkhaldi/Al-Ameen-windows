@@ -55,9 +55,8 @@ public sealed class AgentHeartbeatRequest
 
     // Distinct from OsVersion (Environment.OSVersion.VersionString, e.g. "Microsoft Windows NT
     // 10.0.26200.0" - never includes edition). This is the actual edition display name (e.g. "Windows
-    // 11 Enterprise"), read from the registry by CliEnforcementHealthChecker.ReadEdition() - the same
-    // read used to decide whether AppLocker enforcement is even possible on this device. Lets an admin
-    // see which devices support CliExecute enforcement without RDPing into each one individually.
+    // 11 Enterprise"), read from the registry by WindowsEditionReader.Read(). Lets an admin see what
+    // Windows edition a device is running without RDPing into each one individually.
     public string OperatingSystemEdition { get; set; } = "";
 
     public DateTimeOffset SentAtUtc { get; set; } = DateTimeOffset.UtcNow;

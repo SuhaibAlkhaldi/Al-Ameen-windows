@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
-using System.Security;
 using System.Security.Principal;
+using System.Xml.Linq;
 using CompanyDlp.Contracts;
 using Microsoft.Win32;
 
@@ -12,104 +12,86 @@ namespace CompanyDlp.Service;
 // shape and gating exactly: Production + PersistentProtection only, called from DlpWorker on the same
 // cadence as the browser/screen machine policies.
 //
-// TWO DIFFERENT enforcement mechanisms are used here for two different executable groups, on purpose:
+// AppLocker is NOT used anywhere in this feature, for any of the five restricted executables. This is
+// a deliberate, hard-won decision - do not re-add AppLocker Exe rule collection enforcement to this
+// feature. History, so nobody has to relearn this the hard way:
 //
-// 1) cmd.exe / powershell.exe / powershell_ise.exe / pwsh.exe -> per-user Explorer DisallowRun +
-//    RestrictRun policy (HKEY_USERS\<UserSid>\Software\Microsoft\Windows\CurrentVersion\Policies\
-//    Explorer). This is deliberately NOT an AppLocker Path-Deny rule, even though AppLocker is what
-//    this manager originally used for all five executables. Do not "fix" that by moving these four back
-//    to AppLocker Path-Deny - that is the exact configuration that was proven, live, to break Windows
-//    Shell:
+// This manager originally used a per-user AppLocker Path-Deny rule for cmd.exe/powershell.exe/
+// powershell_ise.exe/pwsh.exe. That was live-confirmed to freeze the Start Menu and Windows Search for
+// a Standard User on Windows 11 24H2 (build 26100) after the first reboot, because an AppLocker
+// Path-Deny rule blocks every launch of the named file under the target user's token - including the
+// internal calls Windows Shell itself makes to cmd.exe/powershell.exe in the background. The fix at
+// that point was to move those four to a per-user Explorer DisallowRun/RestrictRun policy instead
+// (Explorer-launch-only, so it never intercepts Shell's own internal calls) and keep wt.exe on a
+// narrower, single-executable AppLocker Deny rule, since Windows Terminal is a separately installed app
+// that Shell doesn't call into internally.
 //
-//    An AppLocker Path-Deny rule blocks EVERY launch of the named file under the target user's token -
-//    not just launches the user starts directly, but every internal/programmatic call the OS itself
-//    makes on the user's behalf. Windows Shell (Explorer's Start Menu and Windows Search) calls
-//    cmd.exe/powershell.exe internally as part of its own normal background operation. Denying those
-//    internal calls doesn't just stop the user from opening a shell - it was confirmed on a live
-//    Windows 11 24H2 box (build 26100) to freeze the Start Menu and Windows Search entirely for a
-//    Standard User, starting from the very first reboot after the Deny rule took effect.
+// That turned out not to be good enough. It was then live-confirmed - TWICE, independently - that
+// simply turning ON the AppLocker Exe rule collection at all (RuleCollection Type="Exe"
+// EnforcementMode="Enabled") freezes the Start Menu, Windows Search, and other unrelated apps (WhatsApp
+// included) on the same Windows 11 24H2 device, regardless of what the rules inside that collection
+// actually say - once with real Deny rules in effect, once with the Deny rules pointed at an inert
+// placeholder SID that denies nobody. The Allow-Everyone safety-net rule being present did not help
+// either time. In other words: the bug is not in rule content, targeting, or the InertSid toggle trick -
+// it is enabling the Exe rule collection itself, on this device/build, at all. There is no safe way to
+// use AppLocker's Exe collection for this feature on hardware like this, so it is not used for anything
+// here anymore, including wt.exe.
 //
-//    Explorer DisallowRun/RestrictRun is a strictly narrower policy: Explorer is both the only enforcer
-//    and the only caller it ever applies to, so it fires when the employee tries to open one of these
-//    four programs via the Start Menu, Win+R, or a double-click, and it never intercepts Explorer's/
-//    Search's own internal use of the same binaries. That is what actually achieves the product goal
-//    (stop the employee from opening an interactive shell) without the collateral Shell freeze.
+// All five restricted executables (cmd.exe, powershell.exe, powershell_ise.exe, pwsh.exe, wt.exe) are
+// now enforced the same way: a per-user Explorer DisallowRun + RestrictRun policy
+// (HKEY_USERS\<UserSid>\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer). Explorer is both
+// the only enforcer and the only caller this policy ever applies to, so it fires when the employee
+// tries to open one of these five via the Start Menu, Win+R, or a double-click, and it never touches
+// AppLocker, AppIDSvc, or the Exe rule collection at all. Known, accepted trade-off: unlike an
+// AppLocker Path-Deny rule, DisallowRun only intercepts Explorer-initiated launches - a non-Explorer
+// caller (a script directly CreateProcess-ing wt.exe, for example) is not blocked by this policy. That
+// gap is deliberately accepted; it is far better than freezing the Shell for every Standard User on the
+// device.
 //
-// 2) wt.exe (Windows Terminal) -> stays on the original per-user AppLocker Path-Deny rule. wt.exe is a
-//    separately installed app, not a Windows Shell component that Explorer/Search calls into
-//    internally, so a full "block every invocation, not just Explorer-launched ones" rule carries none
-//    of the risk described above - and a full block is exactly what's needed here anyway, since Windows
-//    Terminal can itself open new cmd.exe/PowerShell tabs, which would otherwise route straight around
-//    the Explorer-level restriction on those four.
-//
-// AppLocker over WDAC (for the wt.exe rule; see DlpPolicy.CliEnforcementModes): WDAC policy applies
-// device-wide with no native per-user/per-group concept - a blanket WDAC deny on wt.exe would also catch
-// SYSTEM-context scheduled tasks and any other legitimate use on the device, with no way to scope it to
-// just the employee this policy actually targets. AppLocker natively supports per-user/group Deny rules
-// keyed by SID, which matches this product's actual policy model (deny specific employees, not the whole
-// device) far more closely than WDAC does.
-//
-// Path rules, not Publisher rules (known limitation, documented honestly): a Publisher rule condition
-// would survive a copy/rename of wt.exe far better than a Path rule does, but it requires the exact
-// Authenticode certificate subject string - not something that can be safely hardcoded here without a
-// live signed binary to inspect via Get-AppLockerFileInformation. A wrong hardcoded certificate subject
-// would make the rule silently never match anything, which is a worse failure mode than a documented,
-// honest Path-rule limitation. v1 uses a Path rule; a follow-up can move to a Publisher rule once the
-// exact certificate subject is confirmed on a real device.
+// SelfHealLegacyAppLockerExeEnforcement below exists because devices that ran an earlier build of this
+// agent (from before this decision) can still be carrying a leftover AppLocker Exe rule collection set
+// to EnforcementMode="Enabled" - confirmed live on real test devices - and nothing else on those
+// devices will ever turn it back off on its own. It runs on every apply cycle to find and reset that
+// automatically, with no manual intervention or reinstall required.
 public sealed class CliExecutionPolicyManager(
     PolicyStore policyStore,
     PermissionEvaluator permissionEvaluator,
     AgentIdentityProvider identityProvider,
     InteractiveUserContextProvider interactiveUserContextProvider,
-    CliEnforcementHealthChecker healthChecker,
     AuditLogger auditLogger,
     ILogger<CliExecutionPolicyManager> logger)
 {
-    // Only re-report the health status to the backend on a transition (including the very first
-    // check), not on every ~15s apply cycle - a device stuck ServiceNotRunning would otherwise raise
-    // a fresh High alert every cycle forever, drowning out everything else in the Alerts list.
-    private CliEnforcementHealthStatus? _lastReportedStatus;
-
-    // Fixed rule/collection ids so every apply cycle updates the SAME rules via "-Merge" instead of
-    // accumulating duplicates, and so this manager never touches AppLocker rules an admin authored
-    // by hand for anything else. The "Allow Everyone: *" rule is the standard AppLocker safety net -
-    // without at least one Allow rule present, turning EnforcementMode="Enabled" on for a rule
-    // collection blocks EVERY executable in that collection for EVERYONE, not just the four names
-    // this feature cares about. Never ship the Deny rules below without this rule alongside them.
-    private const string AllowEveryoneRuleId = "8f6a9b1e-2c3d-4e5f-9a1b-0c2d3e4f5a61";
-
-    // "Null SID" - a well-known Windows security identifier that can never be a real logon's SID, so
-    // pointing the Deny rule's UserOrGroupSid at it is equivalent to "this rule denies no one" without
-    // ever removing the rule from the local AppLocker store (Set-AppLockerPolicy -Merge only adds/
-    // updates rules by Id; it cannot remove one). Flipping between a real employee SID and this
-    // placeholder is how this manager grants and revokes enforcement idempotently through -Merge alone.
-    private const string InertSid = "S-1-0-0";
-
-    // AppLocker Path-Deny target: wt.exe only now - see the class-level comment for why cmd.exe/
-    // powershell.exe/powershell_ise.exe/pwsh.exe moved off this mechanism. Kept as an array (not a bare
-    // tuple) so BuildAppLockerPolicyXml doesn't need a separate code path if a second AppLocker-
-    // appropriate executable is ever added.
-    private static readonly (string RuleId, string ExecutableName, string PathCondition)[] AppLockerDenyExecutables =
-    [
-        ("a1b1c1d1-0001-4000-8000-000000000005", "wt.exe", @"%PROGRAMFILES%\WindowsApps\Microsoft.WindowsTerminal_*\wt.exe"),
-    ];
-
-    // Explorer DisallowRun/RestrictRun targets - see the class-level comment for why these four moved
-    // off AppLocker. RestrictRun's value names are 1-based numeric strings, not the executable name
-    // itself, so the array index (not the executable name) is what maps each entry to a fixed slot in
-    // ApplyExplorerDisallowRun - re-applying only ever updates the SAME four values, never accumulates.
+    // Explorer DisallowRun/RestrictRun targets - all five restricted executables now, including wt.exe
+    // (see class-level comment for why AppLocker is no longer used for any of them). RestrictRun's
+    // value names are 1-based numeric strings, not the executable name itself, so the array index (not
+    // the executable name) is what maps each entry to a fixed slot in ApplyExplorerDisallowRun -
+    // re-applying only ever updates the SAME five values, never accumulates.
     private static readonly string[] ExplorerDisallowRunExecutables =
     [
-        "cmd.exe", "powershell.exe", "powershell_ise.exe", "pwsh.exe"
+        "cmd.exe", "powershell.exe", "powershell_ise.exe", "pwsh.exe", "wt.exe"
     ];
 
     private const string ExplorerPoliciesSubKey =
         @"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer";
 
+    // Cheap pre-check so SelfHealLegacyAppLockerExeEnforcement doesn't spawn a PowerShell process every
+    // apply cycle on a device that never had the AppLocker module installed in the first place (nothing
+    // to heal there - Get-AppLockerPolicy couldn't have run on a prior agent version either).
+    private static readonly string AppLockerModulePath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.System),
+        "WindowsPowerShell", "v1.0", "Modules", "AppLocker", "AppLocker.psd1");
+
     public async Task ApplyMachinePoliciesAsync(CancellationToken cancellationToken = default)
     {
         var policy = policyStore.Get();
         if (!OperatingSystem.IsWindows()) return;
+
+        // Runs unconditionally, ahead of every Enabled/Cli.Enabled/mode gate below - a leftover
+        // AppLocker Exe rule collection from a previous agent version is dangerous (see class-level
+        // comment) whether or not CLI enforcement is currently turned on for this device, and nothing
+        // else will ever turn it back off on its own.
+        SelfHealLegacyAppLockerExeEnforcement();
+
         if (!policy.Enabled || !policy.Cli.Enabled) return;
         if (!policy.Runtime.Mode.Equals("Production", StringComparison.OrdinalIgnoreCase) || !policy.Runtime.PersistentProtection)
         {
@@ -120,26 +102,14 @@ public sealed class CliExecutionPolicyManager(
         {
             EnableCommandAuditingPrerequisites();
 
+            // "AppLocker" is a legacy config value name kept for backend/policy-JSON compatibility (see
+            // DlpPolicy.CliEnforcementModes) - it no longer means "use AppLocker" and nothing below this
+            // branch touches AppLocker. It means "CLI blocking is turned on"; the actual mechanism is
+            // always the Explorer DisallowRun/RestrictRun policy applied below.
             if (policy.Cli.EnforcementMode.Equals(CliEnforcementModes.AppLocker, StringComparison.OrdinalIgnoreCase))
             {
-                var (context, appLockerTargetSid, isDeniedForActiveUser) =
-                    await ResolveCliDenyDecisionAsync(policy, cancellationToken);
-
-                // Explorer DisallowRun/RestrictRun has no AppLocker/AppIDSvc dependency - it's plain
-                // Explorer policy, so it's applied unconditionally here, never gated on AppLocker health.
-                // Employee cmd.exe/PowerShell blocking must not depend on this device's AppLocker
-                // platform/service support; the health check below now only describes whether the
-                // wt.exe AppLocker rule further down is actually enforcing.
+                var (context, isDeniedForActiveUser) = await ResolveCliDenyDecisionAsync(policy, cancellationToken);
                 ApplyExplorerDisallowRun(context, isDeniedForActiveUser);
-
-                var health = healthChecker.Check();
-                await ReportHealthTransitionAsync(health, cancellationToken);
-
-                // Still write/stage the AppLocker rule even when unhealthy (harmless, and means
-                // enforcement starts immediately the moment AppIDSvc is started or the device is
-                // reimaged onto a supported edition) - the point of the health check is to make sure
-                // this is never mistaken for actual enforcement, not to skip writing the rule.
-                await ApplyAppLockerDenyRuleAsync(appLockerTargetSid, cancellationToken);
             }
 
             await auditLogger.WriteAsync(new AuditEvent
@@ -191,73 +161,92 @@ public sealed class CliExecutionPolicyManager(
             "/set /subcategory:\"Process Creation\" /success:enable");
     }
 
-    // EventType is what AgentAuditEventService keys its independent (regardless-of-Decision) alert
-    // branch on for this, same "independent" pattern as the CliSensitiveCommand and integrity-mismatch
-    // branches - a High alert whenever enforcement isn't genuinely active is exactly the point of this
-    // whole health check, so it must not depend on some other Decision happening to also be "Block".
-    private async Task ReportHealthTransitionAsync(CliEnforcementHealth health, CancellationToken cancellationToken)
+    // Finds and disarms a leftover AppLocker Exe rule collection from a previous agent version. See the
+    // class-level comment for why: enabling RuleCollection Type="Exe" EnforcementMode="Enabled" AT ALL
+    // - even with harmless/inert rule content - was live-confirmed twice to freeze Start Menu, Windows
+    // Search, and other apps on affected devices. This agent no longer ever enables that collection
+    // itself, but a device that ran an older build before this fix may still carry it, and nothing else
+    // will ever turn it back off. Runs every apply cycle (not just once) so it heals the device no
+    // matter when this version first reaches it, and keeps healing it if anything else ever re-enables
+    // it. Read-only unless a problem is actually found - one PowerShell round trip in the common
+    // (already-healthy) case, a second one only when there is something to actually fix.
+    private void SelfHealLegacyAppLockerExeEnforcement()
     {
-        if (_lastReportedStatus == health.Status) return;
-        var previousStatus = _lastReportedStatus;
-        _lastReportedStatus = health.Status;
+        if (!File.Exists(AppLockerModulePath)) return;
 
-        var isActive = health.Status == CliEnforcementHealthStatus.Active;
-        var reasonCode = health.Status switch
+        try
         {
-            CliEnforcementHealthStatus.Active => "CliEnforcementActive",
-            CliEnforcementHealthStatus.NotSupportedPlatform => "CliEnforcementNotSupportedOnPlatform",
-            CliEnforcementHealthStatus.ModuleUnavailable => "CliEnforcementModuleUnavailable",
-            CliEnforcementHealthStatus.ServiceNotRunning => "CliEnforcementServiceNotRunning",
-            _ => "CliEnforcementUnknown"
-        };
+            var currentPolicyXml = RunPowerShellCaptureStdout(
+                "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"(Get-AppLockerPolicy -Local -Xml)\"",
+                timeoutSeconds: 20);
+            if (string.IsNullOrWhiteSpace(currentPolicyXml)) return;
 
-        if (!isActive)
-        {
+            var exeCollection = XDocument.Parse(currentPolicyXml)
+                .Descendants("RuleCollection")
+                .FirstOrDefault(element => (string?)element.Attribute("Type") == "Exe");
+            if (exeCollection is null) return;
+            if (!string.Equals((string?)exeCollection.Attribute("EnforcementMode"), "Enabled", StringComparison.OrdinalIgnoreCase))
+                return;
+
             logger.LogWarning(
-                "CLI execution enforcement is not active on this device (status={Status}, edition={Edition}). AppLocker Deny rules will be written but will not actually block anything until this is resolved.",
-                health.Status, health.EditionDisplayName);
+                "Found a leftover AppLocker Exe rule collection with EnforcementMode=\"Enabled\" on this " +
+                "device, left behind by a previous agent version. This is known to freeze Start Menu/" +
+                "Windows Search on Windows 11 24H2 (build 26100) regardless of what the collection's " +
+                "rules say. Resetting it to NotConfigured now.");
+
+            var resetXmlPath = Path.Combine(Path.GetTempPath(), $"CompanyDlp-AppLockerSelfHeal-{Guid.NewGuid():N}.xml");
+            try
+            {
+                File.WriteAllText(resetXmlPath, """
+                    <AppLockerPolicy Version="1">
+                      <RuleCollection Type="Exe" EnforcementMode="NotConfigured" />
+                    </AppLockerPolicy>
+                    """);
+
+                // No -Merge: a deliberate full replacement of the Exe collection, wiping every rule in
+                // it (this agent's old ones and anyone else's) along with EnforcementMode itself.
+                // -Merge can only add/update rules by Id - it can never remove one or turn
+                // EnforcementMode back to NotConfigured, so it cannot undo the exact problem being
+                // healed here.
+                var powerShellPath = Path.Combine(
+                    Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe");
+                RunSystemToolFireAndForget(
+                    powerShellPath,
+                    $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command " +
+                    $"\"Set-AppLockerPolicy -XmlPolicy '{resetXmlPath}'\"",
+                    timeoutSeconds: 30);
+            }
+            finally
+            {
+                try { File.Delete(resetXmlPath); } catch { /* best effort cleanup of a temp file */ }
+            }
         }
-
-        await auditLogger.WriteAsync(new AuditEvent
+        catch (Exception exception)
         {
-            ActionKey = ActionKeys.CliExecute,
-
-            // Deliberately a different EventType when restored to Active: AgentAuditEventService's
-            // independent alert branch fires on EventType=="CliEnforcementUnavailable" alone (no
-            // Decision/Result inspection needed), so the good-news transition must never share that
-            // EventType or every device that starts up healthy would raise a spurious alert.
-            EventType = isActive ? "CliEnforcementRestored" : "CliEnforcementUnavailable",
-            Action = "cli-enforcement-health-check",
-            Method = "CliEnforcementHealthChecker",
-            Result = isActive ? "active" : "not-enforced",
-            ReasonCode = reasonCode,
-            Details = $"edition={health.EditionDisplayName} ({health.EditionId}); previousStatus={previousStatus?.ToString() ?? "none"}; currentStatus={health.Status}",
-        }, cancellationToken);
+            logger.LogDebug(exception, "AppLocker Exe-collection self-heal check failed; will retry next cycle.");
+        }
     }
 
-    // Shared by both enforcement mechanisms below: evaluates the CliExecute decision for the active
-    // console user once, applies the local-administrator exemption once, and returns what each applier
-    // needs - the real AppLocker Deny SID (or InertSid if nobody should be denied) for the wt.exe rule,
-    // and a plain allow/deny bool for the Explorer policy, which is written directly into the active
-    // user's own hive rather than through an inert-SID indirection.
-    private async Task<(ClientContext Context, string AppLockerTargetSid, bool IsDeniedForActiveUser)>
-        ResolveCliDenyDecisionAsync(DlpPolicy policy, CancellationToken cancellationToken)
+    // Evaluates the CliExecute decision for the active console user and applies the local-administrator
+    // exemption, for ApplyExplorerDisallowRun to act on.
+    private async Task<(ClientContext Context, bool IsDeniedForActiveUser)> ResolveCliDenyDecisionAsync(
+        DlpPolicy policy, CancellationToken cancellationToken)
     {
         var context = interactiveUserContextProvider.GetActiveConsoleUser();
         if (string.IsNullOrWhiteSpace(context.UserSid))
-            return (context, InertSid, false);
+            return (context, false);
 
         var decision = permissionEvaluator.Evaluate(
             policy, ActionKeys.CliExecute, context, identityProvider.Get(), DateTimeOffset.UtcNow);
         if (decision.IsAllowed)
-            return (context, InertSid, false);
+            return (context, false);
 
         // Local admins keep cmd.exe/PowerShell/wt.exe access even when the employee-facing policy for
         // this device is Deny - an admin locked out of a shell on their own machine (including via a
-        // stale/incorrectly-scoped grant) has no realistic self-service recovery path, and neither
-        // AppLocker Deny rules nor Explorer DisallowRun give a separate "except elevated sessions"
-        // option of their own. Checked by live token/group membership (WindowsPrincipal), not a
-        // hardcoded SID, so it still applies correctly through domain group membership changes.
+        // stale/incorrectly-scoped grant) has no realistic self-service recovery path, and Explorer
+        // DisallowRun gives no separate "except elevated sessions" option of its own. Checked by live
+        // token/group membership (WindowsPrincipal), not a hardcoded SID, so it still applies correctly
+        // through domain group membership changes.
         if (IsLocalAdministrator(context.WindowsSessionId))
         {
             logger.LogInformation(
@@ -278,26 +267,21 @@ public sealed class CliExecutionPolicyManager(
                 Details = "CLI execution Deny policy evaluated to Deny for this user but was not applied because the account is a member of BUILTIN\\Administrators.",
             }, cancellationToken);
 
-            return (context, InertSid, false);
+            return (context, false);
         }
 
-        return (context, context.UserSid, true);
+        return (context, true);
     }
 
     // Writes/clears the Explorer DisallowRun + RestrictRun policy directly in the active console user's
-    // own registry hive (HKEY_USERS\<UserSid>\...\Policies\Explorer). Unlike the AppLocker rule below,
-    // this is not a shared machine-wide store an InertSid placeholder can point away from - toggling it
-    // means literally setting or deleting these values in that specific user's hive on every apply
-    // cycle, the same idempotent set-or-delete shape BrowserPolicyManager.SetOrDeleteDword already uses
-    // (set when the policy should apply, delete - never leave a stale "0" - when it shouldn't).
+    // own registry hive (HKEY_USERS\<UserSid>\...\Policies\Explorer) - the SAME idempotent set-or-delete
+    // shape BrowserPolicyManager.SetOrDeleteDword already uses (set when the policy should apply,
+    // delete - never leave a stale "0" - when it shouldn't).
     //
     // Their hive is only mounted under HKEY_USERS while they are the active interactive console user,
-    // i.e. exactly when `context` here was captured - the same live-session assumption this manager
-    // already makes everywhere else (IsLocalAdministrator, the AppLocker per-user Deny rule itself), so
-    // this introduces no new limitation. Once written, the values live in NTUSER.DAT and persist across
-    // logoff/logon on their own - Explorer re-reads and re-enforces them at every logon without this
-    // service needing to be running, the same way the AppLocker rule persists in the local machine
-    // policy store independent of this service.
+    // i.e. exactly when `context` here was captured. Once written, the values live in NTUSER.DAT and
+    // persist across logoff/logon on their own - Explorer re-reads and re-enforces them at every logon
+    // without this service needing to be running.
     private void ApplyExplorerDisallowRun(ClientContext context, bool shouldDeny)
     {
         if (string.IsNullOrWhiteSpace(context.UserSid)) return;
@@ -337,20 +321,6 @@ public sealed class CliExecutionPolicyManager(
         else key.DeleteValue(name, false);
     }
 
-    private async Task ApplyAppLockerDenyRuleAsync(string targetSid, CancellationToken cancellationToken)
-    {
-        var policyXmlPath = Path.Combine(Path.GetTempPath(), $"CompanyDlp-CliExecute-{Guid.NewGuid():N}.xml");
-        try
-        {
-            await File.WriteAllTextAsync(policyXmlPath, BuildAppLockerPolicyXml(targetSid), cancellationToken);
-            RunPowerShellSetAppLockerPolicy(policyXmlPath);
-        }
-        finally
-        {
-            try { File.Delete(policyXmlPath); } catch { /* best effort cleanup of a temp file */ }
-        }
-    }
-
     // Queries a live token for the interactive console session rather than comparing against a
     // hardcoded SID/name, so this reflects actual effective membership in BUILTIN\Administrators -
     // including via nested domain group membership - the same way Windows itself would evaluate it.
@@ -387,50 +357,47 @@ public sealed class CliExecutionPolicyManager(
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CloseHandle(IntPtr handle);
 
-    // Standard AppLocker local-policy XML shape (the same document Set-AppLockerPolicy -XmlPolicy
-    // expects) - one Allow-Everyone default rule plus one Path Deny rule per AppLocker-restricted
-    // executable (wt.exe only - see class-level comment), all pointed at the SAME fixed rule ids every
-    // cycle so re-applying only ever updates these rules via -Merge, never duplicates them.
-    private static string BuildAppLockerPolicyXml(string denySid)
+    // Same pipe-draining shape as RunSystemToolFireAndForget below (avoids the exact OS-pipe-buffer
+    // deadlock that method's own comment documents), but returns stdout to the caller instead of only
+    // logging it. Used only by SelfHealLegacyAppLockerExeEnforcement, which needs to actually read
+    // Get-AppLockerPolicy's output, not just know whether the command succeeded.
+    private string? RunPowerShellCaptureStdout(string arguments, int timeoutSeconds)
     {
-        var denyRules = string.Join(Environment.NewLine, AppLockerDenyExecutables.Select(exe => $"""
-              <FilePathRule Id="{exe.RuleId}" Name="CompanyDlp deny {SecurityElement.Escape(exe.ExecutableName)}" Description="Managed by Company DLP (CliExecute policy)" UserOrGroupSid="{denySid}" Action="Deny">
-                <Conditions>
-                  <FilePathCondition Path="{SecurityElement.Escape(exe.PathCondition)}" />
-                </Conditions>
-              </FilePathRule>
-        """));
+        var powerShellPath = Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe");
+        if (!File.Exists(powerShellPath)) return null;
 
-        return $"""
-        <AppLockerPolicy Version="1">
-          <RuleCollection Type="Exe" EnforcementMode="Enabled">
-            <FilePathRule Id="{AllowEveryoneRuleId}" Name="(Default Rule) All files" Description="Allows members of the Everyone group to run applications. Required safety net so enabling this collection does not block every executable." UserOrGroupSid="S-1-1-0" Action="Allow">
-              <Conditions>
-                <FilePathCondition Path="*" />
-              </Conditions>
-            </FilePathRule>
-        {denyRules}
-          </RuleCollection>
-        </AppLockerPolicy>
-        """;
-    }
+        using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = powerShellPath,
+            Arguments = arguments,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        });
+        if (process is null) return null;
 
-    private void RunPowerShellSetAppLockerPolicy(string policyXmlPath)
-    {
-        var powerShellPath = Path.Combine(
-            Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe");
+        var stdOutTask = process.StandardOutput.ReadToEndAsync();
+        var stdErrTask = process.StandardError.ReadToEndAsync();
+        var exited = process.WaitForExit(timeoutSeconds * 1000);
+        var stdOut = stdOutTask.GetAwaiter().GetResult();
+        var stdErr = stdErrTask.GetAwaiter().GetResult().Trim();
 
-        // Runs under this Windows Service's own SYSTEM/service account, never the interactive
-        // employee session - confirmed clean (grepped this whole agent codebase) that nothing else
-        // here ever shells out to cmd.exe/powershell.exe, so this is the one intentional exception.
-        // It is not, and cannot be, blocked by the very Deny rule it is applying: that rule's
-        // UserOrGroupSid only ever targets a specific employee SID (or the inert placeholder above),
-        // never SYSTEM.
-        RunSystemToolFireAndForget(
-            powerShellPath,
-            $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command " +
-            $"\"Set-AppLockerPolicy -XmlPolicy '{policyXmlPath}' -Merge\"",
-            timeoutSeconds: 30);
+        if (!exited)
+        {
+            logger.LogDebug("PowerShell query {Arguments} did not exit within {TimeoutSeconds}s.", arguments, timeoutSeconds);
+            return null;
+        }
+
+        if (process.ExitCode != 0)
+        {
+            logger.LogDebug(
+                "PowerShell query {Arguments} exited with code {ExitCode}. Stderr: {Stderr}",
+                arguments, process.ExitCode, stdErr);
+            return null;
+        }
+
+        return stdOut;
     }
 
     // Every caller of this (auditpol.exe, Set-AppLockerPolicy) is a real, meaningful system change

@@ -51,7 +51,6 @@ builder.Services.AddSingleton<UsbProtectionMonitor>();
 builder.Services.AddSingleton<ProcessProtectionMonitor>();
 builder.Services.AddSingleton<SoftwareProtectionMonitor>();
 builder.Services.AddSingleton<WindowsAppControlAuditMonitor>();
-builder.Services.AddSingleton<CliEnforcementHealthChecker>();
 builder.Services.AddSingleton<CliExecutionPolicyManager>();
 builder.Services.AddSingleton<CliExecutionAuditMonitor>();
 builder.Services.AddSingleton<CliSensitiveCommandMonitor>();
