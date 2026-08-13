@@ -21,8 +21,11 @@ public static class ActionKeys
     public const string WatermarkDisable = "watermark.disable";
 
     // CliExecute: presence/allow-deny channel - can this user launch cmd.exe/powershell.exe/pwsh.exe
-    // at all. Enforced by AppLocker Deny rules (CliExecutionPolicyManager), audited from the
-    // AppLocker event log (CliExecutionAuditMonitor).
+    // at all. Enforced by a per-user Explorer DisallowRun/RestrictRun policy for cmd.exe/powershell.exe/
+    // powershell_ise.exe/pwsh.exe and an AppLocker Deny rule for wt.exe (CliExecutionPolicyManager -
+    // see its class comment for why these use two different mechanisms). Only the wt.exe half is
+    // audited from the AppLocker event log (CliExecutionAuditMonitor); Explorer DisallowRun blocks do
+    // not generate a queryable Windows event of their own.
     public const string CliExecute = "cli.execute";
 
     // CliSensitiveCommand: content-classification channel, independent of CliExecute - when CLI

@@ -34,8 +34,13 @@ public sealed record CliEnforcementHealth(
 // validates - it happily accepts and writes a policy on an unsupported platform, a device missing the
 // AppLocker module, or with AppIDSvc stopped, with zero indication anything is wrong. Without this
 // check, an admin setting CliExecute=Block for an employee on an unsupported device sees "policy
-// applied" everywhere while the employee can still open PowerShell freely - a silent-failure gap, not
-// a hypothetical one, since AppIDSvc ships stopped/manual-start by default on most Windows installs.
+// applied" everywhere while wt.exe can still be opened freely - a silent-failure gap, not a
+// hypothetical one, since AppIDSvc ships stopped/manual-start by default on most Windows installs.
+//
+// Scope note: since CliExecutionPolicyManager moved cmd.exe/powershell.exe/powershell_ise.exe/pwsh.exe
+// off AppLocker onto Explorer DisallowRun/RestrictRun (which has no AppLocker/AppIDSvc dependency),
+// this health check now only describes whether the wt.exe AppLocker rule is actively enforcing - not
+// whether the employee can be kept out of cmd.exe/PowerShell, which no longer depends on any of this.
 public sealed class CliEnforcementHealthChecker(ILogger<CliEnforcementHealthChecker> logger)
 {
     // Historically AppLocker enforced only on Enterprise/Education/Server editions - kept as a fallback
