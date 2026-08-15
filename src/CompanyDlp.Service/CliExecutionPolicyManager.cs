@@ -134,6 +134,14 @@ public sealed class CliExecutionPolicyManager(
         }
     }
 
+    // Public entry point so DlpWorker can keep running the AppLocker self-heal on every apply cycle
+    // even while the call to ApplyMachinePoliciesAsync itself is temporarily commented out there (CLI
+    // execution blocking paused - business decision, see DlpWorker.ExecuteAsync). Self-heal must never
+    // be disabled as a side effect of that pause - it cleans up dangerous leftover AppLocker state from
+    // old agent builds, independent of whether CLI blocking is active. Thin wrapper only; does not
+    // change SelfHealLegacyAppLockerExeEnforcement or ApplyMachinePoliciesAsync in any way.
+    public void RunSelfHealOnly() => SelfHealLegacyAppLockerExeEnforcement();
+
     // "Include command line in process creation events" (Security log 4688) and PowerShell Script
     // Block Logging (Operational log 4104) - both are prerequisites CliSensitiveCommandMonitor polls
     // for. The command-line detail is a plain Administrative Templates registry policy (same
