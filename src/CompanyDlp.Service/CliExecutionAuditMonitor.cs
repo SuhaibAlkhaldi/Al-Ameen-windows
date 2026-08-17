@@ -8,6 +8,19 @@ namespace CompanyDlp.Service;
 // "was not allowed to run"), the same shape WindowsAppControlAuditMonitor already uses for the
 // Code Integrity/WDAC log - a separate log/event id pair, so this is a sibling monitor rather than a
 // fork of that one, per the instruction not to fold unrelated logic into it.
+//
+// Expected to find nothing for CliExecute in normal operation: CliExecutionPolicyManager no longer
+// writes ANY AppLocker rule for any of the five restricted executables (cmd.exe/powershell.exe/
+// powershell_ise.exe/pwsh.exe/wt.exe are ALL enforced via a per-user Explorer DisallowRun/RestrictRun
+// policy now - see that class's comment for the live-confirmed-twice reason AppLocker's Exe rule
+// collection is not used here at all anymore), and Explorer does not write an 8004 event, or any other
+// queryable Windows event, when it blocks a DisallowRun'd program - it just shows the user an inline
+// "restricted" message. That is a known, accepted audit-trail gap: a blocked launch attempt via the
+// Start Menu/Win+R is not currently recorded anywhere. This monitor is left running (rather than
+// removed) only as a leftover safety net for the brief window before
+// CliExecutionPolicyManager.SelfHealLegacyAppLockerExeEnforcement resets a legacy device's stale Exe
+// rule collection - do not "fix" the audit gap by writing AppLocker rules again; that reintroduces the
+// Shell-freeze bug this design exists to avoid.
 public sealed partial class CliExecutionAuditMonitor(
     PolicyStore policyStore,
     InteractiveUserContextProvider interactiveUserContextProvider,

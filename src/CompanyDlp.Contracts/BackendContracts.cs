@@ -21,6 +21,17 @@ public sealed class BackendPolicy
     public string PolicySigningPublicKeyPem { get; set; } = "";
     public string AuthenticationMode { get; set; } = BackendAuthenticationModes.DevelopmentNone;
     public string CredentialName { get; set; } = "agent-access-token";
+
+    // Build identity, stamped into policy.json's backend section at build/deploy time (see
+    // scripts\build-portable-agent-package.ps1 and scripts\install-production.ps1 - both run
+    // `git rev-parse --short HEAD` and capture a UTC timestamp) - lives here rather than a new policy
+    // section for the same reason TenantId does: it's agent-install-local, never sent by the backend,
+    // and needs no dedicated section. See BuildIdentity.Describe, which is what actually renders these
+    // two fields into the "<commit> built <timestamp UTC>" string logged on every service startup and
+    // printed by CompanyDlp.Service.exe --version. Empty on a policy that predates this feature or on
+    // any install path that never stamped it (e.g. a hand-edited dev policy).
+    public string BuildCommit { get; set; } = "";
+    public string BuildTimestampUtc { get; set; } = "";
 }
 
 public sealed class AuditBatchRequest
@@ -55,9 +66,8 @@ public sealed class AgentHeartbeatRequest
 
     // Distinct from OsVersion (Environment.OSVersion.VersionString, e.g. "Microsoft Windows NT
     // 10.0.26200.0" - never includes edition). This is the actual edition display name (e.g. "Windows
-    // 11 Enterprise"), read from the registry by CliEnforcementHealthChecker.ReadEdition() - the same
-    // read used to decide whether AppLocker enforcement is even possible on this device. Lets an admin
-    // see which devices support CliExecute enforcement without RDPing into each one individually.
+    // 11 Enterprise"), read from the registry by WindowsEditionReader.Read(). Lets an admin see what
+    // Windows edition a device is running without RDPing into each one individually.
     public string OperatingSystemEdition { get; set; } = "";
 
     public DateTimeOffset SentAtUtc { get; set; } = DateTimeOffset.UtcNow;

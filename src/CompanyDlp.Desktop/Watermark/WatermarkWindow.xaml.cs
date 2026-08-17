@@ -17,8 +17,25 @@ public partial class WatermarkWindow : Window
     private const int WsExToolWindow = 0x00000080;
     private const int WsExNoActivate = 0x08000000;
 
+    // WPF's Topmost="True" (see WatermarkWindow.xaml) only issues a single SetWindowPos(HWND_TOPMOST)
+    // call when the window is created/shown - it is a one-time placement, not a continuously enforced
+    // Z-order rule. Windows' "always on top" band is ordered by most-recent HWND_TOPMOST call, not by
+    // who asked first: any other topmost-capable window that gets (re)inserted into that band later -
+    // confirmed live with Chrome, which churns its own Z-order on things like new tabs, the downloads
+    // shelf, PiP, or entering/leaving fullscreen - can end up above the watermark permanently, since
+    // nothing here ever asked to be put back on top again. The watermark then keeps rendering (the 1s
+    // RenderWatermarks() timer never stopped), it is just no longer the topmost window, so it silently
+    // stops being visible over that one application while still showing fine over the desktop (which
+    // sits at the very bottom of the Z-order and never contests topmost placement).
+    // Fix: re-assert HWND_TOPMOST on the same 1s timer tick that already runs, not just once at Loaded.
+    private static readonly IntPtr HwndTopmost = new(-1);
+    private const uint SwpNoMove = 0x0002;
+    private const uint SwpNoSize = 0x0001;
+    private const uint SwpNoActivate = 0x0010;
+
     private readonly WatermarkPolicy _policy;
     private readonly DispatcherTimer _timer;
+    private IntPtr _handle;
 
     public WatermarkWindow(WatermarkPolicy policy, string sessionId)
     {
@@ -30,17 +47,32 @@ public partial class WatermarkWindow : Window
         SizeChanged += (_, _) => RenderWatermarks();
 
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-        _timer.Tick += (_, _) => RenderWatermarks();
+        _timer.Tick += (_, _) =>
+        {
+            RenderWatermarks();
+            ReassertTopmost();
+        };
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        var handle = new WindowInteropHelper(this).Handle;
-        var style = GetWindowLong(handle, GwlExStyle);
-        SetWindowLong(handle, GwlExStyle, style | WsExTransparent | WsExToolWindow | WsExNoActivate);
+        _handle = new WindowInteropHelper(this).Handle;
+        var style = GetWindowLong(_handle, GwlExStyle);
+        SetWindowLong(_handle, GwlExStyle, style | WsExTransparent | WsExToolWindow | WsExNoActivate);
 
         RenderWatermarks();
+        ReassertTopmost();
         _timer.Start();
+    }
+
+    // SWP_NOACTIVATE is required here on top of the WS_EX_NOACTIVATE extended style already set above -
+    // WS_EX_NOACTIVATE only stops the window from being activated by mouse/keyboard input, it has no
+    // effect on an explicit SetWindowPos call, which would otherwise steal focus from whatever the
+    // employee is actively typing into once a second.
+    private void ReassertTopmost()
+    {
+        if (_handle == IntPtr.Zero) return;
+        SetWindowPos(_handle, HwndTopmost, 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpNoActivate);
     }
 
     private void RenderWatermarks()
@@ -108,4 +140,11 @@ public partial class WatermarkWindow : Window
 
     [DllImport("user32.dll")]
     private static extern int SetWindowLong(IntPtr hwnd, int index, int newStyle);
+
+    // hwndInsertAfter is declared IntPtr, not int, deliberately - HWND is pointer-sized (8 bytes on
+    // x64), and this agent always builds/runs as win-x64 (see publish.ps1's -r win-x64). Declaring it
+    // as a 32-bit int here would under-marshal that parameter and misalign every argument after it in
+    // the native call.
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool SetWindowPos(IntPtr hwnd, IntPtr hwndInsertAfter, int x, int y, int cx, int cy, uint flags);
 }

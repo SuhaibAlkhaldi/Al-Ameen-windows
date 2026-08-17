@@ -82,10 +82,31 @@ public static class SoftwareInstallerClassifier
         return InstallerClassification.NotInstaller("NoInstallerSignal");
     }
 
+    // Was previously a raw commandLine.Contains(extension) over the whole string - matched the
+    // extension as a substring ANYWHERE, not just as a real file extension at the end of a path/token.
+    // Confirmed live 2026-08-17: backgroundTaskHost.exe's legitimate Windows-internal invocation
+    // ("-ServerName:App.AppX3yypww7qrft4zqhh57xaatcrnp803bj7.mca", spawned continuously for built-in
+    // UWP extensions like Desktop Spotlight) contains the literal substring ".appx" purely as part of
+    // an auto-generated package-family GUID ("App.AppX...") - Contains(".appx") matched it every time,
+    // producing 62+ false "Software Install" audit events for one benign system process and zero signal
+    // for real installers. Tokenizing on whitespace and checking EndsWith per token fixes this: a real
+    // installer argument (quoted or not) always has the extension as the actual suffix of its path/
+    // filename token, while this false-positive case has other characters (".mca") after it in the
+    // same token.
     private static bool ContainsPackageArgument(string commandLine, IEnumerable<string> extensions)
     {
         if (string.IsNullOrWhiteSpace(commandLine)) return false;
-        return extensions.Any(extension => commandLine.Contains(extension, StringComparison.OrdinalIgnoreCase));
+
+        foreach (var rawToken in commandLine.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var token = rawToken.Trim('"', '\'');
+            if (extensions.Any(extension => token.EndsWith(extension, StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool ContainsDelimitedInstallerToken(string executableName)

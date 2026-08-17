@@ -19,7 +19,9 @@ public sealed class DlpWorker(
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var policy = policyStore.Reload();
-        logger.LogInformation("Company DLP started in {Mode} mode using {PolicyPath}", policy.Runtime.Mode, policyStore.PolicyPath);
+        logger.LogInformation(
+            "Company DLP started in {Mode} mode using {PolicyPath} (build {BuildIdentity})",
+            policy.Runtime.Mode, policyStore.PolicyPath, BuildIdentity.Describe(policy));
 
         var pipeTask = pipeServer.RunAsync(stoppingToken);
         var lastPolicyApply = DateTimeOffset.MinValue;
@@ -59,7 +61,22 @@ public sealed class DlpWorker(
                     && now - lastPolicyApply >= TimeSpan.FromSeconds(Math.Max(5, policy.Runtime.PolicyReapplySeconds)))
                 {
                     await browserPolicyManager.ApplyMachinePoliciesAsync(stoppingToken);
-                    await cliExecutionPolicyManager.ApplyMachinePoliciesAsync(stoppingToken);
+
+                    // CLI execution blocking is temporarily disabled - business decision, not a
+                    // technical issue. The feature (CliExecutionPolicyManager.cs), its tests, and the
+                    // `cli` policy config section are fully intact and verified (160/160 tests passing
+                    // as of 2026-08-15). Re-enable by uncommenting this call. Do not delete or modify
+                    // CliExecutionPolicyManager.cs, its tests, or the cli config schema while
+                    // investigating this.
+                    // await cliExecutionPolicyManager.ApplyMachinePoliciesAsync(stoppingToken);
+
+                    // SelfHealLegacyAppLockerExeEnforcement must keep running every cycle regardless of
+                    // the pause above - it cleans up dangerous leftover AppLocker state from old agent
+                    // builds and is independent of whether CLI blocking itself is active. Extracted to
+                    // CliExecutionPolicyManager.RunSelfHealOnly() so it isn't disabled as a side effect
+                    // of commenting out ApplyMachinePoliciesAsync. Do not remove this call.
+                    cliExecutionPolicyManager.RunSelfHealOnly();
+
                     lastPolicyApply = now;
                 }
             }

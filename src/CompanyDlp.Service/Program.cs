@@ -3,7 +3,10 @@ using CompanyDlp.Core;
 using CompanyDlp.Service;
 
 var enrollmentMode = args.Any(value => value.Equals("--enroll", StringComparison.OrdinalIgnoreCase));
-var hostArguments = args.Where(value => !value.Equals("--enroll", StringComparison.OrdinalIgnoreCase)).ToArray();
+var versionMode = args.Any(value => value.Equals("--version", StringComparison.OrdinalIgnoreCase));
+var hostArguments = args.Where(value =>
+    !value.Equals("--enroll", StringComparison.OrdinalIgnoreCase) &&
+    !value.Equals("--version", StringComparison.OrdinalIgnoreCase)).ToArray();
 var builder = Host.CreateApplicationBuilder(hostArguments);
 
 builder.Services.AddWindowsService(options => options.ServiceName = "Company DLP Service");
@@ -61,7 +64,6 @@ builder.Services.AddSingleton<UsbProtectionMonitor>();
 builder.Services.AddSingleton<ProcessProtectionMonitor>();
 builder.Services.AddSingleton<SoftwareProtectionMonitor>();
 builder.Services.AddSingleton<WindowsAppControlAuditMonitor>();
-builder.Services.AddSingleton<CliEnforcementHealthChecker>();
 builder.Services.AddSingleton<CliExecutionPolicyManager>();
 builder.Services.AddSingleton<CliExecutionAuditMonitor>();
 builder.Services.AddSingleton<CliSensitiveCommandMonitor>();
@@ -76,6 +78,17 @@ builder.Services.AddHostedService<HeartbeatWorker>();
 var host = builder.Build();
 var policyStore = host.Services.GetRequiredService<PolicyStore>();
 var policy = policyStore.Reload();
+
+// Must work even on a device that isn't enrolled yet or otherwise fails ValidateProductionReadiness
+// below - "which build is this" is exactly the question someone needs answered right after copying
+// binaries down, before enrollment has even happened. Reading policy.json (already done above) is the
+// only thing --version needs.
+if (versionMode)
+{
+    Console.WriteLine(BuildIdentity.Describe(policy));
+    return;
+}
+
 ValidateProductionReadiness(policy, enrollmentMode, host.Services.GetRequiredService<AgentCredentialStore>());
 
 if (enrollmentMode)

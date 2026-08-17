@@ -174,50 +174,73 @@ public sealed class SoftwareProtectionMonitor(
         }
     }
 
+    // Same WMI-hang defense as InteractiveUserContextProvider.TryGetInteractiveUsername (see its
+    // comment for the field evidence): this method used to run the searcher.Get() + InvokeMethod calls
+    // fully synchronously with no timeout, called from DlpWorker's main loop on every tick for every new
+    // process - a single slow/unresponsive WMI response here was enough to block the whole loop
+    // indefinitely with no exception ever thrown. Bounded with the same Task.Run + Wait(timeout) pattern
+    // so a stuck WMI call degrades to "unknown metadata for this process" instead of hanging the monitor
+    // (and, via thread-pool exhaustion once enough of these pile up, every other worker too).
+    private static readonly TimeSpan WmiQueryTimeout = TimeSpan.FromSeconds(5);
+
     private ProcessMetadata TryGetMetadata(int processId)
     {
         try
         {
-            // Must be a full-object query (SELECT *), not a narrow property projection: ManagementObject
-            // instances obtained from a partial SELECT throw InvalidOperationException when InvokeMethod
-            // is called on them (a documented System.Management quirk), which silently broke GetOwnerSid/
-            // GetOwner below and left every SoftwareInstall grant's UserSid/Username context empty. This
-            // query only ever targets a single already-identified process, so the wider column set has no
-            // meaningful cost.
-            using var searcher = new ManagementObjectSearcher(
-                $"SELECT * FROM Win32_Process WHERE ProcessId={processId}");
-            foreach (ManagementObject item in searcher.Get())
+            var task = Task.Run(() =>
             {
-                var executablePath = item["ExecutablePath"]?.ToString() ?? "";
-                var processName = item["Name"]?.ToString() ?? Path.GetFileName(executablePath);
-                var commandLine = item["CommandLine"]?.ToString() ?? "";
-                var userSid = "";
-                var username = "";
-                try
+                // Must be a full-object query (SELECT *), not a narrow property projection: ManagementObject
+                // instances obtained from a partial SELECT throw InvalidOperationException when InvokeMethod
+                // is called on them (a documented System.Management quirk), which silently broke GetOwnerSid/
+                // GetOwner below and left every SoftwareInstall grant's UserSid/Username context empty. This
+                // query only ever targets a single already-identified process, so the wider column set has no
+                // meaningful cost.
+                using var searcher = new ManagementObjectSearcher(
+                    $"SELECT * FROM Win32_Process WHERE ProcessId={processId}");
+                searcher.Options.ReturnImmediately = true;
+                searcher.Options.Timeout = WmiQueryTimeout;
+                foreach (ManagementObject item in searcher.Get())
                 {
-                    var sidOutput = new object[] { "" };
-                    var sidResult = Convert.ToUInt32(item.InvokeMethod("GetOwnerSid", sidOutput));
-                    if (sidResult == 0) userSid = sidOutput[0]?.ToString() ?? "";
+                    var executablePath = item["ExecutablePath"]?.ToString() ?? "";
+                    var processName = item["Name"]?.ToString() ?? Path.GetFileName(executablePath);
+                    var commandLine = item["CommandLine"]?.ToString() ?? "";
+                    var userSid = "";
+                    var username = "";
+                    try
+                    {
+                        var sidOutput = new object[] { "" };
+                        var sidResult = Convert.ToUInt32(item.InvokeMethod("GetOwnerSid", sidOutput));
+                        if (sidResult == 0) userSid = sidOutput[0]?.ToString() ?? "";
 
-                    var ownerOutput = new object[] { "", "" };
-                    var ownerResult = Convert.ToUInt32(item.InvokeMethod("GetOwner", ownerOutput));
-                    if (ownerResult == 0) username = $"{ownerOutput[1]}\\{ownerOutput[0]}".Trim('\\');
-                }
-                catch (Exception exception)
-                {
-                    logger.LogWarning(exception,
-                        "Could not resolve the owning user for process {ProcessId} ({ProcessName}); the SoftwareInstall permission decision for this process will fall back to a subject-less (Global/DeviceId/MachineName only) grant match.",
-                        processId, processName);
+                        var ownerOutput = new object[] { "", "" };
+                        var ownerResult = Convert.ToUInt32(item.InvokeMethod("GetOwner", ownerOutput));
+                        if (ownerResult == 0) username = $"{ownerOutput[1]}\\{ownerOutput[0]}".Trim('\\');
+                    }
+                    catch (Exception exception)
+                    {
+                        logger.LogWarning(exception,
+                            "Could not resolve the owning user for process {ProcessId} ({ProcessName}); the SoftwareInstall permission decision for this process will fall back to a subject-less (Global/DeviceId/MachineName only) grant match.",
+                            processId, processName);
+                    }
+
+                    return new ProcessMetadata(
+                        processName,
+                        executablePath,
+                        commandLine,
+                        userSid,
+                        username,
+                        TryGetPublisher(executablePath));
                 }
 
-                return new ProcessMetadata(
-                    processName,
-                    executablePath,
-                    commandLine,
-                    userSid,
-                    username,
-                    TryGetPublisher(executablePath));
-            }
+                return new ProcessMetadata("unknown", "", "", "", "", "");
+            });
+
+            if (task.Wait(WmiQueryTimeout))
+                return task.Result;
+
+            logger.LogWarning(
+                "WMI process metadata query for process {ProcessId} did not return within {TimeoutSeconds}s; treating as unknown for this cycle instead of blocking indefinitely.",
+                processId, WmiQueryTimeout.TotalSeconds);
         }
         catch (Exception exception)
         {
