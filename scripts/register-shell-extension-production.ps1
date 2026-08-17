@@ -23,4 +23,6 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "CompanyDlp.ShellExtension (file Properties 'DLP' tab) registered for all users." -ForegroundColor Green
+Write-Host "CompanyDlp.ShellExtension (Explorer 'Classification' column, via the Windows Property System) also registered." -ForegroundColor Green
 Write-Host "Explorer may need to be restarted (or the user signed out/in) before the tab appears." -ForegroundColor DarkYellow
+Write-Host "The Classification column will not be visible by default - enable it once via right-click on a column header > More... (Windows never auto-shows a third-party column, regardless of how it was registered)." -ForegroundColor DarkYellow

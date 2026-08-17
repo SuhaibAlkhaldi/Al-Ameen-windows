@@ -8,6 +8,13 @@
     <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.28.0" />
     <PackageReference Include="Microsoft.ML.Tokenizers" Version="2.0.0" />
     <PackageReference Include="PdfPig" Version="0.1.15" />
+    <!-- PdfPig (above) only reads PDFs (used by DocumentTextExtractor for classification) - it has
+         no write/edit support, so stamping a watermark onto an existing PDF needs a separate,
+         writer-capable library. -->
+    <PackageReference Include="PdfSharp" Version="6.1.1" />
+    <!-- Not bundled with the net8.0-windows SDK by default in .NET Core+ (unlike classic .NET
+         Framework) - needed explicitly for drawing watermark text onto raster images. -->
+    <PackageReference Include="System.Drawing.Common" Version="8.0.10" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\CompanyDlp.Contracts\CompanyDlp.Contracts.csproj" />

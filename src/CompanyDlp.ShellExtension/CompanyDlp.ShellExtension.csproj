@@ -34,4 +34,12 @@
   <ItemGroup>
     <ProjectReference Include="..\CompanyDlp.Contracts\CompanyDlp.Contracts.csproj" />
   </ItemGroup>
+
+  <!-- PSRegisterPropertySchema (called from CompanyDlp.ShellExtension.Register) registers this file
+       by path, so it must sit next to the built DLL, not be embedded into it. -->
+  <ItemGroup>
+    <Content Include="CompanyDlp.Classification.propdesc">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
 </Project>

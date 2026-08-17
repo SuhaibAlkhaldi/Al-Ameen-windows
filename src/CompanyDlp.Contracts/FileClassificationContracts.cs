@@ -29,6 +29,20 @@ public sealed class FileClassificationPolicy
     public int ScanIntervalSeconds { get; set; } = 10;
     public bool BackfillCompleted { get; set; }
 
+    // Off by default: WatchedFolders covers real user folders (Desktop/Documents/Downloads) out of
+    // the box, and renaming a user's actual files is a much bigger action than merely reading them -
+    // an admin must opt in deliberately rather than have file names start changing the moment this
+    // version deploys. See FilenameClassificationTagger for the actual tag format.
+    public bool FilenameTaggingEnabled { get; set; }
+
+    // Off by default, and deliberately a SEPARATE switch from FilenameTaggingEnabled - unlike a
+    // rename, this rewrites the actual bytes of a user's file (a diagonal stamp for
+    // PDF/DOCX/PPTX/images, a marker line for TXT), which carries real corruption risk for
+    // malformed edge cases. An admin who wants the (zero-risk) filename tag should not be forced
+    // into the (content-risk) watermark just to get it. See ContentWatermarker for the supported
+    // extensions and per-format implementation.
+    public bool ContentWatermarkingEnabled { get; set; }
+
     // Base URL of the employee-facing Angular portal (not the backend API - a separate deployment).
     // The browser extension appends /permission-requests/new?fromEvent=<correlationId> or
     // ?tier=<X>&actionKey=<key> to build the "Request Permission" deep link on a blocked attempt.

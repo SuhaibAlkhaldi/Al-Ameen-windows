@@ -128,6 +128,10 @@
                                "backendPath":  "api/v1/agent/file-classification",
                                "timeoutSeconds":  30,
                                "maximumFileSizeBytes":  2147483648,
+                               "backgroundScanEnabled":  true,
+                               "watchedFolders":  [ "C:\\Users\\Suhaib\\Desktop\\DemoFolder" ],
+                               "filenameTaggingEnabled":  true,
+                               "contentWatermarkingEnabled":  true,
                                "portalBaseUrl":  "http://localhost:4200"
                            },
     "backend":  {
@@ -141,7 +145,7 @@
                     "policySyncSeconds":  10,
                     "heartbeatSeconds":  15,
                     "allowUnsignedDevelopmentPolicy":  true,
-                    "policySigningPublicKeyPem":  "",
+                    "policySigningPublicKeyPem":  "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEjKnDCskKzHIX+5crFPdWbFzD0g7V\ncPGXY5jI31sdy/Ipa+phvOQtup5J6IoTqAmrzZsHKMEfpIuDp7x7QrQhpA==\n-----END PUBLIC KEY-----\n",
                     "authenticationMode":  "DeviceBearerToken",
                     "credentialName":  "agent-access-token"
                 },

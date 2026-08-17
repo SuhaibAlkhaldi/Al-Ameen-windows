@@ -49,6 +49,20 @@ public sealed class FileClassificationStatusStore(PolicyStore policyStore, ILogg
         }
     }
 
+    // Used when a path stops being valid without a replacement entry taking its place - currently
+    // only by FileInventoryScanner after a filename-tagging rename, to drop the old path's entry
+    // once a fresh one is written under the new path (see ApplyFilenameTag). Without this, a renamed
+    // file would leave a stale, permanently-orphaned entry behind under its old name.
+    public void Delete(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+        lock (_sync)
+        {
+            EnsureLoaded();
+            if (_entries!.Remove(NormalizePath(path))) Save();
+        }
+    }
+
     private void EnsureLoaded()
     {
         if (_entries is not null) return;

@@ -144,13 +144,18 @@ public sealed class FileInventoryScanner(
         var cached = cache.TryGet(hash);
         if (cached is not null && !ProvisionalReasonCodes.Contains(cached.ReasonCode) && cached.RulesVersion == currentRulesVersion)
         {
-            _lastSeenWriteTimes[path] = info.LastWriteTimeUtc;
+            var scannedAtUtc = DateTimeOffset.UtcNow;
+            var (taggedPath, taggedNormalized) = ApplyFilenameTag(path, normalized, cached.Classification, policy);
+            var effectiveWriteTimeUtc = ApplyContentWatermarkIfEnabled(taggedPath, cached.Classification, scannedAtUtc, policy, info.LastWriteTimeUtc);
+            _lastSeenWriteTimes.Remove(path);
+            _lastSeenWriteTimes[taggedPath] = effectiveWriteTimeUtc;
+            if (taggedNormalized != normalized) statusStore.Delete(normalized);
             // LastScannedAtUtc means "when did the scanner last look at THIS file", not "when was
             // this content first classified" - cache.TryGet can return a hit from a completely
             // different, older file that happened to have identical content, so cached.ClassifiedAtUtc
             // would show a stale/misleading timestamp here.
             statusStore.Set(new FileClassificationStatusEntry(
-                normalized, FileClassificationStatuses.UpToDate, hash, DateTimeOffset.UtcNow, cached.ReasonCode, DateTimeOffset.UtcNow));
+                taggedNormalized, FileClassificationStatuses.UpToDate, hash, scannedAtUtc, cached.ReasonCode, DateTimeOffset.UtcNow));
             return;
         }
 
@@ -171,9 +176,17 @@ public sealed class FileInventoryScanner(
             // and more robust than seeking the hashing stream back to 0 (the file could theoretically
             // be mid-write between the two reads, but SHA256 already captured a real snapshot; a
             // content mismatch here at worst yields a stale-by-one-scan classification, corrected on
-            // the next tick once the file settles).
-            await using var contentStream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            var result = await classificationService.ClassifyAsync(request, context, cancellationToken, contentStream);
+            // the next tick once the file settles). Deliberately scoped tightly (not `await using var`
+            // at the method level) and disposed immediately after use - ApplyFilenameTag/
+            // ApplyContentWatermarkIfEnabled below need to rename/rewrite this exact file, and Windows
+            // refuses File.Move on a path that still has an open handle without delete-share rights
+            // (confirmed live: UnauthorizedAccessException from MoveFile when this stream was still
+            // open across the rename attempt).
+            FileClassificationResult result;
+            await using (var contentStream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            {
+                result = await classificationService.ClassifyAsync(request, context, cancellationToken, contentStream);
+            }
             cache.Set(new CachedFileClassification(hash, result.Classification, result.ReasonCode, DateTimeOffset.UtcNow, currentRulesVersion));
 
             if (FileClassificationReasonCodes.UnsupportedReasonCodes.Contains(result.ReasonCode))
@@ -197,9 +210,14 @@ public sealed class FileInventoryScanner(
             }
             else
             {
-                _lastSeenWriteTimes[path] = info.LastWriteTimeUtc;
+                var scannedAtUtc = DateTimeOffset.UtcNow;
+                var (taggedPath, taggedNormalized) = ApplyFilenameTag(path, normalized, result.Classification, policy);
+                var effectiveWriteTimeUtc = ApplyContentWatermarkIfEnabled(taggedPath, result.Classification, scannedAtUtc, policy, info.LastWriteTimeUtc);
+                _lastSeenWriteTimes.Remove(path);
+                _lastSeenWriteTimes[taggedPath] = effectiveWriteTimeUtc;
+                if (taggedNormalized != normalized) statusStore.Delete(normalized);
                 statusStore.Set(new FileClassificationStatusEntry(
-                    normalized, FileClassificationStatuses.UpToDate, hash, DateTimeOffset.UtcNow, result.ReasonCode, DateTimeOffset.UtcNow));
+                    taggedNormalized, FileClassificationStatuses.UpToDate, hash, scannedAtUtc, result.ReasonCode, DateTimeOffset.UtcNow));
             }
         }
         catch (Exception exception)
@@ -212,6 +230,64 @@ public sealed class FileInventoryScanner(
         finally
         {
             _scanningNow.TryRemove(normalized, out _);
+        }
+    }
+
+    // Renames the file to reflect its classification tier (see FilenameClassificationTagger) when
+    // the policy opts in. Returns the path/normalized-path callers should use from this point on -
+    // unchanged from the input if tagging is disabled, already correct, or the rename didn't happen
+    // (locked file, name collision) so the caller falls back to keeping the file under its old name
+    // and simply retries next tick, exactly like any other soft failure in this class.
+    private (string Path, string Normalized) ApplyFilenameTag(string path, string normalized, string classification, FileClassificationPolicy policy)
+    {
+        if (!policy.FilenameTaggingEnabled) return (path, normalized);
+
+        var directory = Path.GetDirectoryName(path);
+        var fileName = Path.GetFileName(path);
+        if (string.IsNullOrEmpty(directory) || string.IsNullOrEmpty(fileName)) return (path, normalized);
+
+        var desiredFileName = FilenameClassificationTagger.BuildTaggedFileName(fileName, classification);
+        if (string.Equals(desiredFileName, fileName, StringComparison.Ordinal)) return (path, normalized);
+
+        var desiredPath = Path.Combine(directory, desiredFileName);
+        if (File.Exists(desiredPath))
+        {
+            logger.LogDebug("Skipped filename tagging for {Path}; a file already exists at {DesiredPath}.", path, desiredPath);
+            return (path, normalized);
+        }
+
+        try
+        {
+            File.Move(path, desiredPath);
+            return (desiredPath, FileClassificationStatusStore.NormalizePath(desiredPath));
+        }
+        catch (Exception exception)
+        {
+            logger.LogDebug(exception, "Could not rename {Path} to reflect its classification; will retry next scan.", path);
+            return (path, normalized);
+        }
+    }
+
+    // Stamps the classification into the file's own content (see ContentWatermarker) when the
+    // policy opts in - a separate, independently-gated step from ApplyFilenameTag, called on
+    // whatever path ApplyFilenameTag already settled on. Returns the write-time callers should
+    // record in _lastSeenWriteTimes: watermarking rewrites the file's bytes, which bumps its real
+    // LastWriteTimeUtc, so that must be re-read from disk after a successful watermark - reusing
+    // the pre-watermark timestamp here would make the very next tick see what looks like a fresh
+    // edit (our own write) and loop forever: reclassify -> re-watermark -> reclassify.
+    private DateTime ApplyContentWatermarkIfEnabled(string path, string classification, DateTimeOffset scannedAtUtc, FileClassificationPolicy policy, DateTime fallbackWriteTimeUtc)
+    {
+        if (!policy.ContentWatermarkingEnabled) return fallbackWriteTimeUtc;
+        if (!ContentWatermarker.ApplyWatermark(path, classification, scannedAtUtc, logger)) return fallbackWriteTimeUtc;
+
+        try
+        {
+            return new FileInfo(path).LastWriteTimeUtc;
+        }
+        catch (Exception exception)
+        {
+            logger.LogDebug(exception, "Watermarked {Path} but could not re-read its write time; using the pre-watermark timestamp.", path);
+            return fallbackWriteTimeUtc;
         }
     }
 

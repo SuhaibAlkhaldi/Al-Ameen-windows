@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Windows Property System schema for the "DLP Classification" Explorer column. Registered at
+  install time via PSRegisterPropertySchema (see CompanyDlp.ShellExtension.Register\Program.cs) -
+  this file must be deployed alongside the handler DLL and stay at a stable path, since the schema
+  is registered by file path, not embedded content.
+
+  formatID/propID here must match PropertySystemInterop.PropertyKeys.Classification exactly.
+
+  Three real bugs found via live testing, each confirmed against Microsoft's own documentation
+  rather than guessed:
+    1. The xmlns was "http://schemas.microsoft.com/windows/2008/propertyschema" - wrong. Per
+       Microsoft's official docs ("Understanding the Property Description Schema"), it must be
+       exactly "http://schemas.microsoft.com/windows/2006/propertydescription". This (plus bug 2
+       below) made PSRegisterPropertySchema return HRESULT 0x000401A0 = INPLACE_S_TRUNCATED, "one
+       or more property descriptions failed to register".
+    2. <searchInfo> was removed during an earlier "minimize the schema" attempt on the theory it
+       was optional - it isn't. The propertyDescription XSD requires exactly one searchInfo
+       element (minOccurs="1"), even though every individual attribute on searchInfo itself is
+       optional. Without it, registration silently truncated this property out of the schema.
+    3. typeInfo's isViewable attribute defaults to "false" - per Microsoft's docs, "the Column
+       Chooser UI only shows the properties that have isViewable=true". Once bugs 1-2 were fixed,
+       the property registered correctly (confirmed live via PSGetNameFromPropertyKey) but still
+       never appeared in Explorer's right-click column header > More... dialog, because it was
+       never marked viewable - registered and functional is not the same as visible in that UI.
+-->
+<schema xmlns="http://schemas.microsoft.com/windows/2006/propertydescription" schemaVersion="1.0">
+  <propertyDescriptionList publisher="CompanyDlp" product="CompanyDlp Agent">
+    <propertyDescription name="CompanyDlp.Classification" formatID="{20219A1A-A3C7-46AF-8822-36EE772CFB2C}" propID="2">
+      <description>The DLP classification tier last assigned to this file.</description>
+      <searchInfo isColumn="true" />
+      <typeInfo type="String" isViewable="true" />
+      <!-- "DLP Classification", not plain "Classification": Windows already ships an unrelated,
+           always-empty built-in column that also shows as "Classification" in the More... list -
+           confirmed live (the user enabled a "Classification" column before this schema was ever
+           registered and saw it, empty, for every file type). Two entries with the identical label
+           would be indistinguishable in that list, so this name must stay visibly distinct. -->
+      <labelInfo label="DLP Classification" />
+      <displayInfo>
+        <typeInfo columnState="Default" />
+      </displayInfo>
+    </propertyDescription>
+  </propertyDescriptionList>
+</schema>
