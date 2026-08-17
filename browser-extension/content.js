@@ -167,7 +167,11 @@
         details,
         destination: location.origin,
         method: action,
-        reasonCode: "DeniedByBrowserPolicy",
+        // Previously hardcoded to "DeniedByBrowserPolicy" - harmless while every caller only ever
+        // reported "blocked", but now that an allowed paste is also audited (see the paste listener
+        // below), a denied-sounding reason code on an Allow row would be actively misleading in the
+        // portal's Audit Events table.
+        reasonCode: result === "blocked" ? "DeniedByBrowserPolicy" : "AllowedByBrowserPolicy",
         resourceName: resource?.name || "",
         resourceExtension: resource?.extension || "",
         resourceSizeBytes: Number.isFinite(resource?.size) ? resource.size : null,
@@ -438,14 +442,23 @@
     if (files.length) {
       const resource = summarizeFile(files[0]);
       const isImage = files.every((file) => String(file.type || "").startsWith("image/"));
+      const pasteAction = isImage ? "paste-image" : "paste-file";
       const shouldBlock = isImage
         ? policy?.browser?.blockImagePaste !== false
         : policy?.browser?.blockFilePaste !== false;
       if (shouldBlock) {
         stop(event);
-        reportBrowserBlock(isImage ? "paste-image" : "paste-file", `${files.length} file(s)`, true, resource);
+        reportBrowserBlock(pasteAction, `${files.length} file(s)`, true, resource);
         return;
       }
+      // Regression fix, confirmed live 2026-08-17: an allowed paste (blockImagePaste/blockFilePaste
+      // === false) fell straight through with zero audit trail, because audit() was only ever called
+      // from the shouldBlock branch above. A real Ctrl+V of both an image and a plain file into a
+      // production browser tab produced no DLP notification AND no Allow/Block/Audit row at all in
+      // Audit Events - a permitted browser.image-paste / browser.file-paste left zero trace of what
+      // left the machine. Every other enforced browser channel logs both outcomes; this restores that
+      // symmetry so an intentionally-granted paste is still visible in the audit log.
+      audit(pasteAction, "allowed", null, `${files.length} file(s)`, resource);
     }
 
     if (policy?.browser?.blockSensitiveInputAndSubmit === false) return;
