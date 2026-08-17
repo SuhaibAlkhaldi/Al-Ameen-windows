@@ -38,8 +38,19 @@ public sealed class BrowserPolicyManager(
                 ApplyChrome(policy.Browser, blockDownloads);
             }
             ApplyWindowsScreenCapturePolicy(policy.Screen, ResolveDisableGameCapture(policy));
+            // ActionKey is set explicitly here (as ActionKeys.PolicyApply, the existing internal/
+            // audit-only channel) - without it, SecurityEventFactory.ResolveActionKey falls back to its
+            // EventType-substring heuristic, and because EventType="browser-policy" contains "browser",
+            // every single one of these purely internal, no-user-action, ~15-20s-cadence housekeeping
+            // events was silently mapped to ActionKeys.BrowserUpload (the browser branch's catch-all
+            // default) and showed up in the portal as fabricated "Browser Upload / Allow" audit rows -
+            // confirmed live 2026-08-17: 1177+ such rows for a single device, drowning out any real
+            // browser.upload activity and making that audit view untrustworthy. policy.apply is already
+            // a seeded, valid ActionKey (used by the real remote-policy-apply events), so this requires
+            // no backend/DB change.
             await auditLogger.WriteAsync(new AuditEvent
             {
+                ActionKey = ActionKeys.PolicyApply,
                 EventType = "browser-policy",
                 Action = "apply-machine-policy",
                 Result = "success",
@@ -51,6 +62,7 @@ public sealed class BrowserPolicyManager(
             logger.LogError(exception, "Unable to apply browser policies.");
             await auditLogger.WriteAsync(new AuditEvent
             {
+                ActionKey = ActionKeys.PolicyApply,
                 EventType = "browser-policy",
                 Action = "apply-machine-policy",
                 Result = "failed",
