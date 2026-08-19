@@ -83,6 +83,15 @@ namespace CompanyDlp.ShellExtension.Register
                     propDescPath);
             }
 
+            // PSRegisterPropertySchema is documented as a one-time-per-install call - re-registering
+            // the same schema path (which happens on every run of deploy-agent-portable.ps1, since it
+            // wipes and recreates C:\Program Files\CompanyDlp from scratch each time) is unsupported
+            // and can itself surface as the same 0x000401A0 (INPLACE_S_TRUNCATED) failure checked
+            // below. PSUnregisterPropertySchema first guarantees any stale prior registration for this
+            // exact path is gone before re-registering - best-effort, its result is intentionally
+            // ignored (there may be nothing registered yet, e.g. on a genuinely first install).
+            PSUnregisterPropertySchema(propDescPath);
+
             // PSRegisterPropertySchema is one of the specific Windows APIs where "nonzero but not
             // negative" is still a real failure, not merely informational: 0x000401A0
             // (INPLACE_S_TRUNCATED) has the HRESULT severity bit clear (so FAILED(hr) says
