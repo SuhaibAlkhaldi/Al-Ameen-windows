@@ -70,6 +70,13 @@ public sealed class AgentHeartbeatRequest
     // Windows edition a device is running without RDPing into each one individually.
     public string OperatingSystemEdition { get; set; } = "";
 
+    // BIOS serial number (DeviceHardwareInfoReader.GetSerialNumber()) and the primary NIC's MAC
+    // address (DeviceHardwareInfoReader.GetPrimaryMacAddress()) - both cached agent-side after the
+    // first successful read, so these are often already populated well before this specific
+    // heartbeat tick. Empty string means "not read yet" or "read failed", never null.
+    public string SerialNumber { get; set; } = "";
+    public string MacAddress { get; set; } = "";
+
     public DateTimeOffset SentAtUtc { get; set; } = DateTimeOffset.UtcNow;
     public long LastAppliedPolicyVersion { get; set; }
     public int PendingAuditEventCount { get; set; }

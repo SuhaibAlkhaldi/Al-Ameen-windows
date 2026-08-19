@@ -30,6 +30,8 @@ public sealed class HeartbeatWorker(
                         AgentVersion = identity.AgentVersion,
                         OsVersion = Environment.OSVersion.VersionString,
                         OperatingSystemEdition = WindowsEditionReader.Read().DisplayName,
+                        SerialNumber = DeviceHardwareInfoReader.GetSerialNumber(),
+                        MacAddress = DeviceHardwareInfoReader.GetPrimaryMacAddress(),
                         LastAppliedPolicyVersion = policyStore.CurrentRemoteVersion,
                         PendingAuditEventCount = status.PendingCount
                     }, stoppingToken);
