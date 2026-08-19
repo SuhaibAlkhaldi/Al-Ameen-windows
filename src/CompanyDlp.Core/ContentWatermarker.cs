@@ -42,7 +42,9 @@ public static class ContentWatermarker
     private static readonly Dictionary<string, string> LabelsByTier = new(StringComparer.OrdinalIgnoreCase)
     {
         [ClassificationTiers.Public] = "PUBLIC",
-        [ClassificationTiers.Internal] = "INTERNAL",
+        // Wire value stays "Internal" (ClassificationTiers.Internal constant unchanged) - only the
+        // stamped watermark text changed, per explicit request, to "RESTRICTED".
+        [ClassificationTiers.Internal] = "RESTRICTED",
         [ClassificationTiers.Secret] = "SECRET",
         [ClassificationTiers.VerySecret] = "VERY SECRET",
     };
