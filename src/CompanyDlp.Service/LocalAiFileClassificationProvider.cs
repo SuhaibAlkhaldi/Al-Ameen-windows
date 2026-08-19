@@ -8,7 +8,7 @@ namespace CompanyDlp.Service;
 // evaluation (DictionaryEvaluator, against the admin-configured DictionaryRuleStore) all happen in
 // this same process - no network call, no external process, on the employee's machine.
 public sealed class LocalAiFileClassificationProvider(
-    LocalEntityExtractor entityExtractor,
+    LocalEntityExtractor? entityExtractor,
     DictionaryRuleStore dictionaryRuleStore) : IFileClassificationProvider
 {
     public string Name => FileClassificationProviders.AiApi;
@@ -18,6 +18,24 @@ public sealed class LocalAiFileClassificationProvider(
         Stream? fileContent,
         CancellationToken cancellationToken)
     {
+        // The AI model files weren't deployed to this device (see Program.cs's registration of
+        // LocalEntityExtractor as nullable/optional, which already logged a warning explaining what's
+        // missing) - fail closed exactly like BlockAllFileClassificationProvider, rather than touching
+        // entityExtractor at all.
+        if (entityExtractor is null)
+        {
+            return new FileClassificationResult
+            {
+                RequestId = request.RequestId,
+                IsAllowed = false,
+                IsSensitive = true,
+                Classification = "Sensitive",
+                ReasonCode = "BlockAllUntilAiProviderAvailable",
+                Provider = Name,
+                EvaluatedAtUtc = DateTimeOffset.UtcNow
+            };
+        }
+
         if (fileContent is null)
         {
             return new FileClassificationResult
@@ -56,11 +74,14 @@ public sealed class LocalAiFileClassificationProvider(
         }
 
         // Entity extraction runs the ONNX model synchronously (CPU-bound, no I/O) - offloaded onto a
-        // thread pool thread so it never blocks the caller's async context.
+        // thread pool thread so it never blocks the caller's async context. Captured as a local here
+        // (rather than referencing the nullable constructor parameter directly inside the closure) so
+        // the null-checked-above guarantee is unambiguous across the lambda boundary.
+        var extractor = entityExtractor;
         var (severity, reasoning) = await Task.Run(() =>
         {
             var text = DocumentTextExtractor.ExtractText(fileContent, extension);
-            var entities = entityExtractor.Extract(text);
+            var entities = extractor.Extract(text);
             var rules = dictionaryRuleStore.Get().Rules;
             var evaluation = DictionaryEvaluator.Evaluate(entities, rules, text);
             return (evaluation.Severity, evaluation.Reasoning);
