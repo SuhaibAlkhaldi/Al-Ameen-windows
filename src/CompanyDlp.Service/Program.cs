@@ -9,7 +9,7 @@ var hostArguments = args.Where(value =>
     !value.Equals("--version", StringComparison.OrdinalIgnoreCase)).ToArray();
 var builder = Host.CreateApplicationBuilder(hostArguments);
 
-builder.Services.AddWindowsService(options => options.ServiceName = "Company DLP Service");
+builder.Services.AddWindowsService(options => options.ServiceName = "Al-Ameen Service");
 builder.Services.AddHttpClient("CompanyDlp.Backend");
 
 builder.Services.AddSingleton<MachineDataProtector>();
@@ -142,7 +142,7 @@ if (enrollmentMode)
         },
         CancellationToken.None);
 
-    Console.WriteLine($"Company DLP device {identity.DeviceId:D} enrolled. Credential expires at {result.ExpiresAtUtc:O}.");
+    Console.WriteLine($"Al-Ameen device {identity.DeviceId:D} enrolled. Credential expires at {result.ExpiresAtUtc:O}.");
     return;
 }
 
@@ -165,7 +165,7 @@ static void ValidateProductionReadiness(
 
     if (failures.Count == 0) return;
 
-    var message = "Company DLP production readiness validation failed:"
+    var message = "Al-Ameen production readiness validation failed:"
         + Environment.NewLine
         + string.Join(Environment.NewLine, failures.Select(item => "- " + item));
     throw new InvalidOperationException(message);

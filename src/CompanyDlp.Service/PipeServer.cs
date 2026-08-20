@@ -289,7 +289,7 @@ public sealed class PipeServer(
             {
                 var input = request.Data?.Deserialize<FileProtectionRequest>(JsonDefaults.Options) ?? new FileProtectionRequest();
                 if (clientAccessToken is null || clientAccessToken.IsInvalid)
-                    return DlpResponse.Fail("Company DLP could not authenticate the Windows user for this file operation.");
+                    return DlpResponse.Fail("Al-Ameen could not authenticate the Windows user for this file operation.");
 
                 var result = await WindowsIdentity.RunImpersonatedAsync(
                     clientAccessToken,
@@ -434,7 +434,7 @@ public sealed class PipeServer(
                 ("File drag and drop blocked", "Dragging or dropping files into browser pages is not allowed by company security policy."),
             "form-file-submit" or "formdata-file" or "formdata-files" or "xhr-file-upload" or "fetch-file-upload" or "beacon-file-upload"
                 or "websocket-file-upload" or "rtc-file-upload" =>
-                ("File upload blocked", "A browser page attempted to upload a file or binary payload and Company DLP blocked the operation."),
+                ("File upload blocked", "A browser page attempted to upload a file or binary payload and Al-Ameen blocked the operation."),
             "web-share-file" => ("File sharing blocked", "Sharing files from this browser is not allowed by company security policy."),
             "worker-file-transfer" => ("File transfer blocked", "A browser page attempted to transfer a file or binary payload to a background worker."),
             "paste-file" or "clipboard-file-transfer" =>

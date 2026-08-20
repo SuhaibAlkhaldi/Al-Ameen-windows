@@ -70,7 +70,7 @@ icacls $installDir /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "Administrators:(O
 icacls $dataDir /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" /T /C | Out-Null
 
 $serviceExe = Join-Path $installDir "Service\CompanyDlp.Service.exe"
-sc.exe create CompanyDlp binPath= "`"$serviceExe`"" start= auto DisplayName= "Company DLP Service" | Out-Null
+sc.exe create CompanyDlp binPath= "`"$serviceExe`"" start= auto DisplayName= "Al-Ameen Service" | Out-Null
 sc.exe description CompanyDlp "Company endpoint data loss prevention service" | Out-Null
 
 $desktopExe = Join-Path $installDir "Desktop\CompanyDlp.Desktop.exe"

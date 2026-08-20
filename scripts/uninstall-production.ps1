@@ -101,5 +101,5 @@ Get-ChildItem "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList" -
 [Environment]::SetEnvironmentVariable("COMPANY_DLP_POLICY_PATH", $null, "Machine")
 [Environment]::SetEnvironmentVariable("COMPANY_DLP_SESSION_AGENT_EXE", $null, "Machine")
 Remove-Item $installDir -Recurse -Force -ErrorAction SilentlyContinue
-Write-Host "Company DLP was removed and the installer-owned browser policy values were restored." -ForegroundColor Green
+Write-Host "Al-Ameen was removed and the installer-owned browser policy values were restored." -ForegroundColor Green
 Write-Host "Audit and policy files remain under $env:ProgramData\CompanyDlp for investigation. Delete them manually only after approval." -ForegroundColor Yellow

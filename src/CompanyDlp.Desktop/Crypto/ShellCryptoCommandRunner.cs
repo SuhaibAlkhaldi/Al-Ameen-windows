@@ -43,18 +43,18 @@ public static class ShellCryptoCommandRunner
 
             if (!response.Success) throw new InvalidOperationException(response.Message);
             var result = response.Data?.Deserialize<FileProtectionResponse>(JsonDefaults.Options)
-                ?? throw new InvalidOperationException("Invalid response from Company DLP service.");
+                ?? throw new InvalidOperationException("Invalid response from Al-Ameen service.");
             if (!result.Success) throw new InvalidOperationException(result.Message);
 
             var message = isEncrypt
                 ? $"Encryption and verification completed.\n\nCreated: {Path.GetFileName(result.OutputPath)}\nThe original plaintext file was deleted according to policy."
                 : $"Decryption completed.\n\nCreated: {Path.GetFileName(result.OutputPath)}\nThe encrypted .dlpenc file was kept.";
-            WpfMessageBox.Show(message, "Company DLP", MessageBoxButton.OK, MessageBoxImage.Information);
+            WpfMessageBox.Show(message, "Al-Ameen", MessageBoxButton.OK, MessageBoxImage.Information);
             return 0;
         }
         catch (Exception exception)
         {
-            WpfMessageBox.Show(exception.Message, "Company DLP operation failed", MessageBoxButton.OK, MessageBoxImage.Error);
+            WpfMessageBox.Show(exception.Message, "Al-Ameen operation failed", MessageBoxButton.OK, MessageBoxImage.Error);
             return 1;
         }
     }

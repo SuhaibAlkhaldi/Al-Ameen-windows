@@ -188,7 +188,7 @@ public partial class MainWindow : Window
                 browserStatus = _developmentSession.LaunchPreferredProtectedBrowser();
                 ShowSecurityAlert(
                     "Protected browser opened",
-                    "Use a browser profile where Company DLP extension v3.0.0 is enabled. Chrome/Edge can use browser-extension; Firefox uses firefox-extension. Reload pages opened before enabling the extension.",
+                    "Use a browser profile where the Al-Ameen extension v3.0.0 is enabled. Chrome/Edge can use browser-extension; Firefox uses firefox-extension. Reload pages opened before enabling the extension.",
                     "Info");
             }
             catch (Exception browserException)
@@ -210,7 +210,7 @@ public partial class MainWindow : Window
     private void EmergencyRestore_Click(object sender, RoutedEventArgs e) => StopAndRestore();
     private void TestAlert_Click(object sender, RoutedEventArgs e) =>
         ShowSecurityAlert(
-            "Company DLP test alert",
+            "Al-Ameen test alert",
             "User alerts are enabled. Blocked actions will display the reason in this area.",
             "Info");
 
@@ -302,8 +302,8 @@ public partial class MainWindow : Window
     {
         var dialog = new Microsoft.Win32.OpenFileDialog
         {
-            Title = "Select a Company DLP encrypted file",
-            Filter = "Company DLP encrypted files (*.dlpenc)|*.dlpenc|All files (*.*)|*.*",
+            Title = "Select an Al-Ameen encrypted file",
+            Filter = "Al-Ameen encrypted files (*.dlpenc)|*.dlpenc|All files (*.*)|*.*",
             CheckFileExists = true,
             Multiselect = false
         };
@@ -327,7 +327,7 @@ public partial class MainWindow : Window
             throw new InvalidOperationException(result?.Message ?? response.Message);
 
         if (result is null)
-            throw new InvalidOperationException("The Company DLP service returned an invalid file-protection response.");
+            throw new InvalidOperationException("The Al-Ameen service returned an invalid file-protection response.");
         if (!result.Success) throw new InvalidOperationException(result.Message);
         return result.OutputPath;
     }

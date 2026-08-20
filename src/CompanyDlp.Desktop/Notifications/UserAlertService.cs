@@ -110,7 +110,7 @@ public sealed class UserAlertService : IDisposable
         });
         panel.Children.Add(new TextBlock
         {
-            Text = "Company DLP • Action blocked by company security policy",
+            Text = "Al-Ameen • Action blocked by company security policy",
             Foreground = new WpfSolidColorBrush(WpfColor.FromArgb(210, 255, 255, 255)),
             FontSize = 11,
             Margin = new Thickness(0, 8, 0, 0),

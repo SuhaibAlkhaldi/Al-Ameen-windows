@@ -210,7 +210,7 @@
     Object.assign(body.style, { font: "500 14px/1.45 Arial,sans-serif" });
 
     const footer = document.createElement("div");
-    footer.textContent = "Company DLP • Action blocked by company security policy";
+    footer.textContent = "Al-Ameen • Action blocked by company security policy";
     Object.assign(footer.style, { font: "500 11px Arial,sans-serif", opacity: ".82", marginTop: "8px" });
 
     notice.append(heading, body, footer);

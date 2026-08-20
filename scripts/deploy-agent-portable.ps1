@@ -406,7 +406,7 @@ Set-LockdownRecursive -Path $dataDir -ContainerGrants @("SYSTEM:(OI)(CI)F", "Adm
 
 $serviceExe = Join-Path $installDir "Service\CompanyDlp.Service.exe"
 Set-InstallProgress "Registering the background service..."
-sc.exe create CompanyDlp binPath= "`"$serviceExe`"" start= auto DisplayName= "Company DLP Service" | Out-Null
+sc.exe create CompanyDlp binPath= "`"$serviceExe`"" start= auto DisplayName= "Al-Ameen Service" | Out-Null
 sc.exe description CompanyDlp "Company endpoint data loss prevention service" | Out-Null
 
 $desktopExe = Join-Path $installDir "Desktop\CompanyDlp.Desktop.exe"

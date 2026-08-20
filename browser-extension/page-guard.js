@@ -272,7 +272,7 @@
       for (const input of scope.querySelectorAll?.('input[type="file"]') || []) inputs.push(input);
       for (const input of inputs) {
         input.dataset.companyDlpProtected = "true";
-        input.setAttribute("title", "File selection is inspected by Company DLP before upload");
+        input.setAttribute("title", "File selection is inspected by Al-Ameen before upload");
       }
     } catch (_) { }
   }

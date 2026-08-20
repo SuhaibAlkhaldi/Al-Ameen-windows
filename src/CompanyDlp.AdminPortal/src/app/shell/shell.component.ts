@@ -10,7 +10,7 @@ import { AuthService } from '../core/auth.service';
       <aside class="sidebar">
         <div class="brand">
           <span class="brand-mark">DLP</span>
-          <div><strong>Company DLP</strong><small>Central Administration</small></div>
+          <div><strong>Al-Ameen</strong><small>Central Administration</small></div>
         </div>
         <nav aria-label="Administration">
           @if (auth.session()?.role !== 'Auditor') {

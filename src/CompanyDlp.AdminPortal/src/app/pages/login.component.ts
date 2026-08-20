@@ -11,7 +11,7 @@ import { apiErrorMessage } from '../core/api-error';
   template: `
     <div class="auth-page">
       <form class="auth-card" (ngSubmit)="submit()">
-        <div class="brand auth-brand"><span class="brand-mark">DLP</span><div><strong>Company DLP</strong><small>Admin Portal</small></div></div>
+        <div class="brand auth-brand"><span class="brand-mark">DLP</span><div><strong>Al-Ameen</strong><small>Admin Portal</small></div></div>
         <h1>Administrator login</h1>
         <p class="muted">Manage endpoint permissions and security policy.</p>
         @if (error()) { <div class="alert error">{{ error() }}</div> }
