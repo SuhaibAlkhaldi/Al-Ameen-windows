@@ -6,7 +6,12 @@ param(
     [Parameter(Mandatory=$true)] [string]$ChromeExtensionId,
     [Parameter(Mandatory=$true)] [string]$ChromeExtensionUpdateUrl,
     [Parameter(Mandatory=$true)] [string]$EdgeExtensionId,
-    [Parameter(Mandatory=$true)] [string]$EdgeExtensionUpdateUrl
+    [Parameter(Mandatory=$true)] [string]$EdgeExtensionUpdateUrl,
+    # Optional - Firefox needs a Mozilla-signed .xpi (see scripts/pack-firefox-extension.ps1) before it
+    # can be force-installed, so unlike Chrome/Edge above this can be omitted to install without
+    # Firefox coverage.
+    [string]$FirefoxExtensionId,
+    [string]$FirefoxExtensionUpdateUrl
 )
 $ErrorActionPreference = "Stop"
 if ($TenantId -eq [Guid]::Empty) { throw "TenantId must not be empty." }
@@ -54,6 +59,11 @@ $policy.browser.chromeExtensionId = $ChromeExtensionId
 $policy.browser.chromeExtensionUpdateUrl = $ChromeExtensionUpdateUrl
 $policy.browser.edgeExtensionId = $EdgeExtensionId
 $policy.browser.edgeExtensionUpdateUrl = $EdgeExtensionUpdateUrl
+# Add-Member -Force (not dot-assignment) so this still works even against a policy.production.sample.json
+# template that predates these two fields - see backend.buildCommit/buildTimestampUtc below for the
+# same pattern.
+if ($FirefoxExtensionId) { $policy.browser | Add-Member -NotePropertyName "firefoxExtensionId" -NotePropertyValue $FirefoxExtensionId -Force }
+if ($FirefoxExtensionUpdateUrl) { $policy.browser | Add-Member -NotePropertyName "firefoxExtensionUpdateUrl" -NotePropertyValue $FirefoxExtensionUpdateUrl -Force }
 $policy.backend.tenantId = $TenantId
 $policy.backend.baseUrl = $backendUri.AbsoluteUri.TrimEnd('/')
 $policy.backend.policySigningPublicKeyPem = $policySigningPublicKeyPem
@@ -88,7 +98,9 @@ $desktopExe = Join-Path $installDir "Desktop\CompanyDlp.Desktop.exe"
     -ChromeExtensionId $ChromeExtensionId `
     -ChromeExtensionUpdateUrl $ChromeExtensionUpdateUrl `
     -EdgeExtensionId $EdgeExtensionId `
-    -EdgeExtensionUpdateUrl $EdgeExtensionUpdateUrl
+    -EdgeExtensionUpdateUrl $EdgeExtensionUpdateUrl `
+    -FirefoxExtensionId $FirefoxExtensionId `
+    -FirefoxExtensionXpiUrl $FirefoxExtensionUpdateUrl
 
 [Environment]::SetEnvironmentVariable("COMPANY_DLP_MODE", "Production", "Machine")
 [Environment]::SetEnvironmentVariable("COMPANY_DLP_POLICY_PATH", (Join-Path $dataDir "policy.json"), "Machine")

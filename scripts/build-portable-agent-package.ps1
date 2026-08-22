@@ -12,6 +12,17 @@
 # so if you're using one, first export its public portion to a .cer file and pass that path here.
 # It gets bundled into the package, and deploy-agent-portable.ps1 auto-trusts it on each target
 # machine at install time (it already runs elevated, so this needs no separate manual/GPO step).
+#
+# -FirefoxExtensionId/-FirefoxExtensionUpdateUrl are OPTIONAL, unlike the Chrome/Edge pairs. This
+# script only threads pre-existing extension id/update-URL values into portable-config.json and
+# through to register-browser-force-install.ps1 at deploy time - it never packs or signs a browser
+# extension itself, for Chrome/Edge or Firefox. For Firefox specifically that matters more than usual:
+# Firefox Release refuses to install an unsigned .xpi even via enterprise policy, so
+# -FirefoxExtensionUpdateUrl must already point at a build produced by
+# scripts\pack-firefox-extension.ps1 AND signed through Mozilla's Add-on signing (channel: unlisted) -
+# a one-time manual step against a real Mozilla Developer Hub account (see that script's own header
+# comment for exactly how). Omit both Firefox parameters to build a Chrome/Edge-only package, same as
+# before this parameter pair existed.
 param(
     [Parameter(Mandatory=$true)] [string]$CertThumbprint,
     [Parameter(Mandatory=$true)] [Guid]$TenantId,
@@ -21,6 +32,14 @@ param(
     [Parameter(Mandatory=$true)] [string]$ChromeExtensionUpdateUrl,
     [Parameter(Mandatory=$true)] [string]$EdgeExtensionId,
     [Parameter(Mandatory=$true)] [string]$EdgeExtensionUpdateUrl,
+    # Optional, unlike the Chrome/Edge pairs above - omit both to build a package without Firefox
+    # coverage (existing Chrome/Edge-only usage keeps working unchanged). $FirefoxExtensionUpdateUrl
+    # must point at an ALREADY Mozilla-signed .xpi that is already hosted/reachable at that URL - this
+    # script does not sign or host anything itself; see scripts\pack-firefox-extension.ps1 for
+    # producing that file (packing is local/automatic, the actual Mozilla signing step is a one-time
+    # manual action against a real Mozilla Developer Hub account - see that script's header comment).
+    [string]$FirefoxExtensionId = "",
+    [string]$FirefoxExtensionUpdateUrl = "",
     [string]$RootCertPath,
     [string]$TimestampServer = "http://timestamp.digicert.com",
     [string]$OutputDirectory = "artifacts\portable-package"
@@ -35,6 +54,16 @@ if (-not [Uri]::TryCreate($BackendBaseUrl, [UriKind]::Absolute, [ref]$backendUri
 if (-not (Test-Path $PolicySigningPublicKeyPemPath)) { throw "Policy signing public-key PEM file was not found." }
 $policySigningPublicKeyPem = [string](Get-Content $PolicySigningPublicKeyPemPath -Raw)
 if ($policySigningPublicKeyPem -notmatch "BEGIN PUBLIC KEY") { throw "Policy signing public-key PEM is invalid." }
+
+# Same "both or neither, and never a half-filled placeholder" check register-browser-force-install.ps1
+# applies at deploy time - failing fast here (build time) instead means a bad Firefox value never even
+# makes it into portable-config.json in the first place.
+if (($FirefoxExtensionId -and -not $FirefoxExtensionUpdateUrl) -or ($FirefoxExtensionUpdateUrl -and -not $FirefoxExtensionId)) {
+    throw "-FirefoxExtensionId and -FirefoxExtensionUpdateUrl must be supplied together, or neither."
+}
+if (($FirefoxExtensionId -like "REPLACE*") -or ($FirefoxExtensionUpdateUrl -like "REPLACE*")) {
+    throw "FirefoxExtensionId/FirefoxExtensionUpdateUrl still looks like an unfilled placeholder."
+}
 
 # Build identity - the whole point of this block is "never mistake an old package for a new one"
 # again, so a missing/failed git lookup is a hard stop, not a silent "unknown" fallback: a package
@@ -127,6 +156,8 @@ $config = [ordered]@{
     chromeExtensionUpdateUrl   = $ChromeExtensionUpdateUrl
     edgeExtensionId             = $EdgeExtensionId
     edgeExtensionUpdateUrl      = $EdgeExtensionUpdateUrl
+    firefoxExtensionId          = $FirefoxExtensionId
+    firefoxExtensionUpdateUrl   = $FirefoxExtensionUpdateUrl
     buildCommit                = $buildCommit
     buildTimestampUtc          = $buildTimestampUtc
 }

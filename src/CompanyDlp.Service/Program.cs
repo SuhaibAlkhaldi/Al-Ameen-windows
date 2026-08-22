@@ -84,6 +84,7 @@ builder.Services.AddSingleton<IFileKeyProtector, FileKeyProtector>();
 builder.Services.AddSingleton<FileProtectionEngine>();
 builder.Services.AddSingleton<FileProtectionCoordinator>();
 builder.Services.AddSingleton<NotificationStore>();
+builder.Services.AddSingleton<ExtensionHealthChecker>();
 builder.Services.AddSingleton<BrowserPolicyManager>();
 builder.Services.AddSingleton<RuntimeOverrideStore>();
 builder.Services.AddSingleton<UsbDeviceInventory>();
