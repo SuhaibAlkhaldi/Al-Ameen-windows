@@ -10,7 +10,15 @@ public sealed record FileClassificationStatusEntry(
     string? LastClassifiedHash,
     DateTimeOffset? LastScannedAtUtc,
     string? LastReasonCode,
-    DateTimeOffset UpdatedAtUtc);
+    DateTimeOffset UpdatedAtUtc,
+    // Mirrors FileInventoryScanner's in-memory _lastSeenWriteTimes (the file's own LastWriteTimeUtc
+    // as of the last time this scanner fully finished with it, including any watermark rewrite) -
+    // persisted so it survives a service restart. This can't be reconstructed from LastClassifiedHash:
+    // watermarking rewrites the file's bytes, so re-hashing it after a restart never reproduces the
+    // pre-watermark hash that was actually classified - confirmed live, that approach just re-stamped
+    // the file every restart forever. The write-time comparison sidesteps hashing entirely for a file
+    // the scanner has already fully handled and nothing has touched since.
+    DateTimeOffset? LastSeenWriteTimeUtc = null);
 
 // Local, persisted PATH -> display status lookup, written by FileInventoryScanner and read by
 // FileClassificationStatusResolver for the Explorer hover-tooltip feature (CompanyDlp.ShellExtension).
@@ -36,6 +44,17 @@ public sealed class FileClassificationStatusStore(PolicyStore policyStore, ILogg
         {
             EnsureLoaded();
             return _entries!.GetValueOrDefault(NormalizePath(path));
+        }
+    }
+
+    // Used once, at startup, by FileInventoryScanner to rebuild its in-memory _lastSeenWriteTimes
+    // guard from the persisted LastSeenWriteTimeUtc values - see that field's comment.
+    public IReadOnlyCollection<FileClassificationStatusEntry> GetAll()
+    {
+        lock (_sync)
+        {
+            EnsureLoaded();
+            return _entries!.Values.ToList();
         }
     }
 

@@ -23,5 +23,8 @@
     <!-- Local entity-detection model assets (ONNX export + SentencePiece tokenizer) - large binaries,
          deployed alongside the agent but never committed to source control (see .gitignore). -->
     <None Include="AiModel\**" CopyToOutputDirectory="PreserveNewest" Condition="Exists('AiModel')" />
+    <!-- Tesseract OCR language data (eng/ara .traineddata, tessdata_fast variant) - same
+         never-committed, deployed-alongside-the-agent policy as AiModel above. -->
+    <None Include="TessData\**" CopyToOutputDirectory="PreserveNewest" Condition="Exists('TessData')" />
   </ItemGroup>
 </Project>

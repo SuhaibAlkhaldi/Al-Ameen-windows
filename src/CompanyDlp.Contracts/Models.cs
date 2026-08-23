@@ -115,6 +115,13 @@ public sealed class UserNotification
     public string Message { get; set; } = "An action was blocked by company policy.";
     public string Severity { get; set; } = "Warning";
     public string Action { get; set; } = "blocked";
+
+    // Pre-built deep link into the employee portal's permission-request form (e.g.
+    // "{portalBaseUrl}/permission-requests/new?actionKey=file.print&fromEvent={correlationId}"),
+    // matching the browser extension's buildRequestPermissionLink for browser-triggered blocks.
+    // Empty when the blocking event has no natural "request permission for this" action (or the
+    // portal isn't configured) - the Desktop toast only renders a button when this is non-empty.
+    public string RequestPermissionUrl { get; set; } = "";
 }
 
 

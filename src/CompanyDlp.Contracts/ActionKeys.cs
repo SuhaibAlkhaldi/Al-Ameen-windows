@@ -18,6 +18,7 @@ public static class ActionKeys
     public const string SoftwareExecuteUnapproved = "software.execute-unapproved";
     public const string FileEncrypt = "file.encrypt";
     public const string FileDecrypt = "file.decrypt";
+    public const string FilePrint = "file.print";
     public const string WatermarkDisable = "watermark.disable";
 
     // CliExecute: presence/allow-deny channel - can this user launch cmd.exe/powershell.exe/
@@ -61,6 +62,7 @@ public static class ActionKeys
         SoftwareExecuteUnapproved,
         FileEncrypt,
         FileDecrypt,
+        FilePrint,
         WatermarkDisable,
         CliExecute,
         CliSensitiveCommand

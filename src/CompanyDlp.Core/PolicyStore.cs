@@ -55,6 +55,7 @@ public sealed class PolicyStore(
         target.Software = localSource.Software;
         target.Cli = localSource.Cli;
         target.FileProtection = localSource.FileProtection;
+        target.Print = localSource.Print;
         target.FileClassification = localSource.FileClassification;
         target.Backend = localSource.Backend;
         target.Runtime = localSource.Runtime;
@@ -225,6 +226,7 @@ public sealed class PolicyStore(
                 [ActionKeys.SoftwareExecuteUnapproved] = false,
                 [ActionKeys.FileEncrypt] = true,
                 [ActionKeys.FileDecrypt] = true,
+                [ActionKeys.FilePrint] = false,
                 [ActionKeys.AgentSession] = true,
 
                 // Deny by default like every other channel above: this product's real customer base

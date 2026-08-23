@@ -66,6 +66,14 @@ builder.Services.AddSingleton<LocalEntityExtractor>(provider =>
 
     return new LocalEntityExtractor(onnxModelPath, tokenizerModelPath);
 });
+builder.Services.AddSingleton(provider =>
+{
+    var baseDirectory = AppContext.BaseDirectory;
+    var tessDataPath = provider.GetRequiredService<IConfiguration>()["LocalAi:TessDataPath"]
+        ?? Path.Combine(baseDirectory, "TessData");
+    var ocrLanguages = provider.GetRequiredService<IConfiguration>()["LocalAi:OcrLanguages"] ?? "eng+ara";
+    return new ImageOcrExtractor(tessDataPath, ocrLanguages);
+});
 builder.Services.AddSingleton<LocalAiFileClassificationProvider>();
 builder.Services.AddSingleton<FileClassificationService>();
 builder.Services.AddSingleton<FileClassificationCache>();
@@ -100,6 +108,11 @@ builder.Services.AddSingleton<CliSensitiveCommandMonitor>();
 builder.Services.AddSingleton<PipeServer>();
 
 builder.Services.AddHostedService<DlpWorker>();
+
+// Its own dedicated BackgroundService, not ticked from DlpWorker's shared loop - see
+// PrintProtectionMonitor's class comment for why (a print job's cancellable window is too brief to
+// share a poll cadence meant for screen-recording detection).
+builder.Services.AddHostedService<PrintProtectionMonitor>();
 builder.Services.AddHostedService<AuditSyncWorker>();
 builder.Services.AddHostedService<PolicySyncWorker>();
 builder.Services.AddHostedService<DictionaryRuleSyncWorker>();
@@ -120,6 +133,7 @@ if (versionMode)
 }
 
 ValidateProductionReadiness(policy, enrollmentMode, host.Services.GetRequiredService<AgentCredentialStore>());
+DocumentTextExtractor.ConfigureImageOcr(host.Services.GetRequiredService<ImageOcrExtractor>());
 
 if (enrollmentMode)
 {

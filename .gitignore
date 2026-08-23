@@ -54,3 +54,6 @@ Thumbs.db
 # narrower patterns like these.
 src/CompanyDlp.Service/AiModel/*.onnx
 src/CompanyDlp.Service/AiModel/*.model
+
+# Local-only Tesseract OCR language data (deployed separately, never committed)
+src/CompanyDlp.Service/TessData/

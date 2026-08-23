@@ -65,6 +65,10 @@
 
                                           ]
             },
+    "print":  {
+                  "enabled":  true,
+                  "enforcementMode":  "Block"
+              },
     "screen":  {
                    "enabled":  true,
                    "protectDlpWindowFromCapture":  true,
@@ -148,7 +152,7 @@
                            },
     "backend":  {
                     "enabled":  true,
-                    "tenantId":  "93107c02-bf7e-4aac-9955-d2a723fafc95",
+                    "tenantId":  "f413df6c-9599-47aa-b8ab-32b0d3731f14",
                     "mode":  "Development",
                     "baseUrl":  "https://localhost:7008",
                     "requestTimeoutSeconds":  15,

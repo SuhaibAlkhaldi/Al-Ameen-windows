@@ -20,6 +20,10 @@
     <!-- Not bundled with the net8.0-windows SDK by default in .NET Core+ (unlike classic .NET
          Framework) - needed explicitly for drawing watermark text onto raster images. -->
     <PackageReference Include="System.Drawing.Common" Version="8.0.10" />
+    <!-- .NET binding over the native Tesseract/Leptonica libraries - used by ImageOcrExtractor to
+         extract text from JPG/PNG images before classification. Auto-deploys the native x86/x64
+         tesseract/leptonica DLLs as content items via its own build targets. -->
+    <PackageReference Include="Tesseract" Version="5.2.0" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\CompanyDlp.Contracts\CompanyDlp.Contracts.csproj" />

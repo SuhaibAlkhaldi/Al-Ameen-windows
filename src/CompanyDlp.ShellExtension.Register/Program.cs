@@ -156,7 +156,7 @@ namespace CompanyDlp.ShellExtension.Register
         // because CompanyDlp.Core targets net8.0-windows and this project targets net48 (see
         // CompanyDlp.ShellExtension.csproj's header comment on why), so CompanyDlp.Core isn't
         // available to reference here. Keep in sync by hand if that list ever changes.
-        private static readonly string[] ClassifiedExtensions = { ".txt", ".pdf", ".docx" };
+        private static readonly string[] ClassifiedExtensions = { ".txt", ".pdf", ".docx", ".jpg", ".jpeg", ".png" };
 
         private static void UnregisterClassificationColumn()
         {

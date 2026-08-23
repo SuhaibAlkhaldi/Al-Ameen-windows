@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using WpfBrushes = System.Windows.Media.Brushes;
@@ -20,7 +21,8 @@ public sealed class UserAlertService : IDisposable
         string title,
         string message,
         string severity = "Error",
-        int durationSeconds = 6)
+        int durationSeconds = 6,
+        string requestPermissionUrl = "")
     {
         if (_disposed) return;
 
@@ -30,14 +32,14 @@ public sealed class UserAlertService : IDisposable
         _ = dispatcher.InvokeAsync(() =>
         {
             if (_disposed) return;
-            ShowOnUiThread(title, message, severity, durationSeconds);
+            ShowOnUiThread(title, message, severity, durationSeconds, requestPermissionUrl);
         });
     }
 
     public void Show(UserNotification notification, int durationSeconds = 6) =>
-        Show(notification.Title, notification.Message, notification.Severity, durationSeconds);
+        Show(notification.Title, notification.Message, notification.Severity, durationSeconds, notification.RequestPermissionUrl);
 
-    private void ShowOnUiThread(string title, string message, string severity, int durationSeconds)
+    private void ShowOnUiThread(string title, string message, string severity, int durationSeconds, string requestPermissionUrl = "")
     {
         var now = DateTimeOffset.UtcNow;
         var key = BuildDeduplicationKey(title, message, severity);
@@ -60,10 +62,11 @@ public sealed class UserAlertService : IDisposable
                 ? WpfColor.FromRgb(30, 64, 175)
                 : WpfColor.FromRgb(185, 28, 28);
 
+        var hasRequestPermissionLink = !string.IsNullOrWhiteSpace(requestPermissionUrl);
         var window = new Window
         {
             Width = 430,
-            Height = 142,
+            Height = hasRequestPermissionLink ? 172 : 142,
             WindowStyle = WindowStyle.None,
             ResizeMode = ResizeMode.NoResize,
             AllowsTransparency = true,
@@ -116,6 +119,29 @@ public sealed class UserAlertService : IDisposable
             Margin = new Thickness(0, 8, 0, 0),
             TextWrapping = TextWrapping.Wrap
         });
+
+        if (hasRequestPermissionLink)
+        {
+            var requestPermissionLink = new TextBlock
+            {
+                Text = "Request Permission →",
+                Foreground = WpfBrushes.White,
+                FontSize = 13,
+                FontWeight = FontWeights.SemiBold,
+                Margin = new Thickness(0, 10, 0, 0),
+                Cursor = System.Windows.Input.Cursors.Hand,
+                TextDecorations = System.Windows.TextDecorations.Underline
+            };
+            requestPermissionLink.MouseLeftButtonUp += (_, _) =>
+            {
+                try
+                {
+                    Process.Start(new ProcessStartInfo(requestPermissionUrl) { UseShellExecute = true });
+                }
+                catch { }
+            };
+            panel.Children.Add(requestPermissionLink);
+        }
 
         border.Child = panel;
         window.Content = border;
