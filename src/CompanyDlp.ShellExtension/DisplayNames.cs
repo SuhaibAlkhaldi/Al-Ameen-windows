@@ -27,7 +27,10 @@ namespace CompanyDlp.ShellExtension
             switch (value)
             {
                 case ClassificationTiers.Public: return "Public";
-                case ClassificationTiers.Internal: return "Internal";
+                // Wire value stays "Internal" (ClassificationTiers.Internal constant unchanged) - only
+                // the text shown in the Explorer "Classification" column/property page changed, per
+                // explicit request, to "Restricted".
+                case ClassificationTiers.Internal: return "Restricted";
                 case ClassificationTiers.Secret: return "Secret";
                 case ClassificationTiers.VerySecret: return "Very Secret";
                 case "Unclassified": return "Unclassified";

@@ -9,7 +9,7 @@ var hostArguments = args.Where(value =>
     !value.Equals("--version", StringComparison.OrdinalIgnoreCase)).ToArray();
 var builder = Host.CreateApplicationBuilder(hostArguments);
 
-builder.Services.AddWindowsService(options => options.ServiceName = "Company DLP Service");
+builder.Services.AddWindowsService(options => options.ServiceName = "Al-Ameen Service");
 builder.Services.AddHttpClient("CompanyDlp.Backend");
 
 builder.Services.AddSingleton<MachineDataProtector>();
@@ -28,13 +28,42 @@ builder.Services.AddSingleton<ContentNormalizer>();
 builder.Services.AddSingleton<FragmentSessionTracker>();
 builder.Services.AddSingleton<ContentClassifier>();
 builder.Services.AddSingleton<BlockAllFileClassificationProvider>();
-builder.Services.AddSingleton(provider =>
+
+// LocalEntityExtractor's constructor loads the ONNX model and SentencePiece tokenizer files
+// unconditionally (File.OpenRead + new InferenceSession, no try/catch) - the model files are ~1.1GB
+// and deliberately excluded from git (see AiModel/.gitignore), so a machine that hasn't had them
+// deployed yet must not fail the whole service's startup over it. This singleton is registered as
+// nullable/optional: if either file is missing, no LocalEntityExtractor is constructed at all (just a
+// warning explaining exactly what's missing and where it was expected), and
+// LocalAiFileClassificationProvider falls back to a block-all decision instead of trying to use it -
+// see that class's ClassifyAsync.
+builder.Services.AddSingleton<LocalEntityExtractor>(provider =>
 {
     var baseDirectory = AppContext.BaseDirectory;
     var onnxModelPath = provider.GetRequiredService<IConfiguration>()["LocalAi:OnnxModelPath"]
         ?? Path.Combine(baseDirectory, "AiModel", "gliner_model.onnx");
     var tokenizerModelPath = provider.GetRequiredService<IConfiguration>()["LocalAi:TokenizerModelPath"]
         ?? Path.Combine(baseDirectory, "AiModel", "spm.model");
+
+    var missingPaths = new List<string>();
+    if (!File.Exists(onnxModelPath)) missingPaths.Add(onnxModelPath);
+    if (!File.Exists(tokenizerModelPath)) missingPaths.Add(tokenizerModelPath);
+
+    if (missingPaths.Count > 0)
+    {
+        provider.GetRequiredService<ILogger<Program>>().LogWarning(
+            "Local AI file classification is unavailable - the following model file(s) are missing: {MissingModelPaths}. " +
+            "File classification will fail closed (block-all) until these are deployed to this device.",
+            string.Join(", ", missingPaths));
+        // The DI container itself doesn't care about this factory's declared nullability - only the
+        // runtime value it returns - so registering as non-nullable LocalEntityExtractor (rather than
+        // LocalEntityExtractor?, which trips the AddSingleton<T> `where T : class` constraint) and
+        // null-forgiving this specific return is the clean way to make GetService<LocalEntityExtractor>()
+        // still yield null here. LocalAiFileClassificationProvider's constructor parameter is the one
+        // actually annotated nullable, which is what makes that null flow through correctly.
+        return null!;
+    }
+
     return new LocalEntityExtractor(onnxModelPath, tokenizerModelPath);
 });
 builder.Services.AddSingleton(provider =>
@@ -63,6 +92,7 @@ builder.Services.AddSingleton<IFileKeyProtector, FileKeyProtector>();
 builder.Services.AddSingleton<FileProtectionEngine>();
 builder.Services.AddSingleton<FileProtectionCoordinator>();
 builder.Services.AddSingleton<NotificationStore>();
+builder.Services.AddSingleton<ExtensionHealthChecker>();
 builder.Services.AddSingleton<BrowserPolicyManager>();
 builder.Services.AddSingleton<RuntimeOverrideStore>();
 builder.Services.AddSingleton<UsbDeviceInventory>();
@@ -123,7 +153,7 @@ if (enrollmentMode)
         },
         CancellationToken.None);
 
-    Console.WriteLine($"Company DLP device {identity.DeviceId:D} enrolled. Credential expires at {result.ExpiresAtUtc:O}.");
+    Console.WriteLine($"Al-Ameen device {identity.DeviceId:D} enrolled. Credential expires at {result.ExpiresAtUtc:O}.");
     return;
 }
 
@@ -146,7 +176,7 @@ static void ValidateProductionReadiness(
 
     if (failures.Count == 0) return;
 
-    var message = "Company DLP production readiness validation failed:"
+    var message = "Al-Ameen production readiness validation failed:"
         + Environment.NewLine
         + string.Join(Environment.NewLine, failures.Select(item => "- " + item));
     throw new InvalidOperationException(message);

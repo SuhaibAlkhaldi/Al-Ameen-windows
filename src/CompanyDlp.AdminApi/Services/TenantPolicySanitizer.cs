@@ -110,7 +110,35 @@ public static class TenantPolicySanitizer
         policy.Permissions.DefaultPermissions = normalizedDefaults;
         policy.Permissions.Grants ??= [];
 
+        var extensionError = ValidateExtensionPolicy(policy.Browser);
+        if (extensionError is not null) return extensionError;
+
         return ValidateSimpleStrings(policy);
+    }
+
+    // Rejects a bad extensionId/updateUrl pair here, at the one place every tenant's policy passes
+    // through before it is ever signed and shipped to a device - the alternative is BrowserPolicyManager
+    // silently discovering the same problem machine-by-machine, which is exactly how a real deployment
+    // shipped literal "REPLACE_..." placeholders with BlockUnapprovedExtensions enabled (every
+    // extension, including Ameen's own, got blocked with no working replacement). NotConfigured (both
+    // fields blank) is deliberately allowed through unchanged - a tenant that hasn't set up self-hosted
+    // extension distribution yet is a valid, if unprotected, state; a tenant that tried and typo'd/left
+    // a placeholder is not.
+    private static string? ValidateExtensionPolicy(BrowserPolicy browser)
+    {
+        if (ExtensionPolicyValidator.Validate(browser.ChromeExtensionId, browser.ChromeExtensionUpdateUrl, ExtensionPlatform.Chrome)
+            == ExtensionForceInstallStatus.Invalid)
+            return "InvalidChromeExtensionForceInstall";
+
+        if (ExtensionPolicyValidator.Validate(browser.EdgeExtensionId, browser.EdgeExtensionUpdateUrl, ExtensionPlatform.Edge)
+            == ExtensionForceInstallStatus.Invalid)
+            return "InvalidEdgeExtensionForceInstall";
+
+        if (ExtensionPolicyValidator.Validate(browser.FirefoxExtensionId, browser.FirefoxExtensionUpdateUrl, ExtensionPlatform.Firefox)
+            == ExtensionForceInstallStatus.Invalid)
+            return "InvalidFirefoxExtensionForceInstall";
+
+        return null;
     }
 
     private static string? ValidateSimpleStrings(DlpPolicy policy)
@@ -118,8 +146,10 @@ public static class TenantPolicySanitizer
         if ((policy.Runtime.AuditDirectory ?? "").Length > 1000
             || (policy.Browser.ChromeExtensionId ?? "").Length > 200
             || (policy.Browser.EdgeExtensionId ?? "").Length > 200
+            || (policy.Browser.FirefoxExtensionId ?? "").Length > 200
             || (policy.Browser.ChromeExtensionUpdateUrl ?? "").Length > 2000
             || (policy.Browser.EdgeExtensionUpdateUrl ?? "").Length > 2000
+            || (policy.Browser.FirefoxExtensionUpdateUrl ?? "").Length > 2000
             || (policy.Watermark.Prefix ?? "").Length > 500
             || (policy.FileProtection.KeyProvider ?? "").Length > 100
             || (policy.FileClassification.Provider ?? "").Length > 100

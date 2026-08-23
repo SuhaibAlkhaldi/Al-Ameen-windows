@@ -122,7 +122,7 @@ public sealed class ProcessProtectionMonitor(
                 var message = result switch
                 {
                     "terminated" => $"{name} was closed because {watch.CapabilityLabel} is prohibited by company policy.",
-                    "termination-failed" => $"{name} was detected, but Company DLP could not close it. Contact IT.",
+                    "termination-failed" => $"{name} was detected, but Al-Ameen could not close it. Contact IT.",
                     _ => $"{name} was detected while {watch.CapabilityLabel} protection is enabled."
                 };
                 notificationStore.Add(

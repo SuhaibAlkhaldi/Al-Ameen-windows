@@ -32,6 +32,8 @@
                     "chromeExtensionUpdateUrl":  "REPLACE_WITH_CHROME_STORE_OR_SELF_HOSTED_UPDATE_URL",
                     "edgeExtensionId":  "REPLACE_AFTER_PUBLISHING_EXTENSION",
                     "edgeExtensionUpdateUrl":  "REPLACE_WITH_EDGE_STORE_OR_SELF_HOSTED_UPDATE_URL",
+                    "firefoxExtensionId":  "REPLACE_AFTER_PUBLISHING_EXTENSION",
+                    "firefoxExtensionUpdateUrl":  "REPLACE_WITH_SELF_HOSTED_SIGNED_XPI_URL",
                     "blockFilePaste":  true,
                     "blockImagePaste":  true
                 },

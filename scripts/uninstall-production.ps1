@@ -16,9 +16,10 @@ Remove-Item "HKLM:\SOFTWARE\Google\Chrome\NativeMessagingHosts\com.company.dlp" 
 Remove-Item "HKLM:\SOFTWARE\Microsoft\Edge\NativeMessagingHosts\com.company.dlp" -Recurse -Force -ErrorAction SilentlyContinue
 
 
-# Two independent mechanisms can write these list policies with different value names:
-# register-browser-force-install.ps1 (a numeric list index, "1") and BrowserPolicyManager.cs's
-# runtime-applied policy (fixed literal "9999"). Clean up both regardless of which one actually ran.
+# "1" is the single value name both register-browser-force-install.ps1 and BrowserPolicyManager.cs's
+# runtime-applied policy write now (see BrowserPolicyManager.ExtensionPolicyValueName). "9999" is kept
+# here only for backward-compat cleanup of a machine that was installed before that fix and may still
+# carry a stale "9999" entry from BrowserPolicyManager.cs's old (broken) runtime-applied policy.
 foreach ($item in @(
     @{ Path = "HKLM:\SOFTWARE\Policies\Google\Chrome\ExtensionInstallForcelist"; Name = "1" },
     @{ Path = "HKLM:\SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallForcelist"; Name = "1" },
@@ -31,6 +32,13 @@ foreach ($item in @(
 )) {
     Remove-ItemProperty $item.Path -Name $item.Name -Force -ErrorAction SilentlyContinue
 }
+
+# Firefox's ExtensionSettings entries are keyed by the extension id itself (see
+# register-browser-force-install.ps1), not a fixed name like Chrome/Edge's Forcelist/Blocklist, so
+# there is no single value name to remove by - the whole ExtensionSettings key is installer-owned
+# (nothing else in a default Windows/Firefox setup writes it), so it is safe to remove outright rather
+# than trying to remove individual values.
+Remove-Item "HKLM:\SOFTWARE\Policies\Mozilla\Firefox\ExtensionSettings" -Force -ErrorAction SilentlyContinue
 
 & (Join-Path $PSScriptRoot "production-browser-policy-backup.ps1") -Mode Restore
 
@@ -101,5 +109,5 @@ Get-ChildItem "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList" -
 [Environment]::SetEnvironmentVariable("COMPANY_DLP_POLICY_PATH", $null, "Machine")
 [Environment]::SetEnvironmentVariable("COMPANY_DLP_SESSION_AGENT_EXE", $null, "Machine")
 Remove-Item $installDir -Recurse -Force -ErrorAction SilentlyContinue
-Write-Host "Company DLP was removed and the installer-owned browser policy values were restored." -ForegroundColor Green
+Write-Host "Al-Ameen was removed and the installer-owned browser policy values were restored." -ForegroundColor Green
 Write-Host "Audit and policy files remain under $env:ProgramData\CompanyDlp for investigation. Delete them manually only after approval." -ForegroundColor Yellow

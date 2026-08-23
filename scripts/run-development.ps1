@@ -134,7 +134,7 @@ try {
             Write-LauncherStep "Central Admin API is healthy."
         }
 
-        Write-LauncherStep "Starting Company DLP Service through signed dotnet.exe."
+        Write-LauncherStep "Starting Al-Ameen Service through signed dotnet.exe."
         $service = Start-Process -FilePath $dotnetExe `
             -ArgumentList ('"{0}"' -f $serviceDll) `
             -WorkingDirectory $root `
@@ -146,9 +146,9 @@ try {
         if ($service.HasExited) {
             $errorText = if (Test-Path $serviceErr) { Get-Content $serviceErr -Raw -ErrorAction SilentlyContinue } else { "" }
             $outputText = if (Test-Path $serviceOut) { Get-Content $serviceOut -Raw -ErrorAction SilentlyContinue } else { "" }
-            throw "Company DLP Service exited with code $($service.ExitCode).`nSTDERR:`n$errorText`nSTDOUT:`n$outputText"
+            throw "Al-Ameen Service exited with code $($service.ExitCode).`nSTDERR:`n$errorText`nSTDOUT:`n$outputText"
         }
-        Write-LauncherStep "Company DLP Service is running (PID $($service.Id))."
+        Write-LauncherStep "Al-Ameen Service is running (PID $($service.Id))."
 
         if ($SkipShellIntegration) {
             Write-LauncherStep "Skipping Development File Explorer integration by request."

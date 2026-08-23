@@ -111,7 +111,7 @@ public sealed class UserNotification
     public long Id { get; set; }
     public DateTimeOffset OccurredAtUtc { get; set; } = DateTimeOffset.UtcNow;
     public string Category { get; set; } = "security";
-    public string Title { get; set; } = "Company DLP";
+    public string Title { get; set; } = "Al-Ameen";
     public string Message { get; set; } = "An action was blocked by company policy.";
     public string Severity { get; set; } = "Warning";
     public string Action { get; set; } = "blocked";

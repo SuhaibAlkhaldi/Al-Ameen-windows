@@ -59,6 +59,12 @@ public sealed class BrowserPolicy
     public string ChromeExtensionUpdateUrl { get; set; } = "";
     public string EdgeExtensionId { get; set; } = "";
     public string EdgeExtensionUpdateUrl { get; set; } = "";
+
+    // FirefoxExtensionUpdateUrl must point at a signed .xpi (Firefox Release refuses to install an
+    // unsigned one even via enterprise policy) - see scripts/pack-firefox-extension.ps1 for the
+    // one-time manual Mozilla Add-on signing step this depends on.
+    public string FirefoxExtensionId { get; set; } = "";
+    public string FirefoxExtensionUpdateUrl { get; set; } = "";
 }
 
 public sealed class UsbPolicy

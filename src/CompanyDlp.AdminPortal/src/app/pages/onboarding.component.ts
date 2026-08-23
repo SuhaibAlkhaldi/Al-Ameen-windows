@@ -11,7 +11,7 @@ import { apiErrorMessage } from '../core/api-error';
   template: `
     <div class="auth-page">
       <form class="auth-card wide" (ngSubmit)="submit()">
-        <div class="brand auth-brand"><span class="brand-mark">DLP</span><div><strong>Company DLP</strong><small>Secure onboarding</small></div></div>
+        <div class="brand auth-brand"><span class="brand-mark">DLP</span><div><strong>Al-Ameen</strong><small>Secure onboarding</small></div></div>
         <h1>Create the first tenant owner</h1>
         <p class="muted">Public onboarding is intended for initial development setup only.</p>
         @if (error()) { <div class="alert error">{{ error() }}</div> }

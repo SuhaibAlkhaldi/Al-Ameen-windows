@@ -45,8 +45,29 @@ namespace CompanyDlp.ShellExtension.Register
                     ServerRegistrationManager.InstallServer(handler, registrationType, true);
                     Console.WriteLine("CompanyDlp.ShellExtension (DLP Properties tab) registered.");
 
-                    RegisterClassificationColumn();
-                    Console.WriteLine("CompanyDlp.ShellExtension (Classification Explorer column) registered.");
+                    // The Explorer "Classification" column is a pure UI convenience read via the
+                    // Windows Property System (PSRegisterPropertySchema) - PermissionEvaluator and every
+                    // other real enforcement path never consult it, they read classification straight
+                    // from FileClassificationCache. A handful of production machines have hit
+                    // PSRegisterPropertySchema returning 0x000401A0 (INPLACE_S_TRUNCATED) even after the
+                    // PSUnregisterPropertySchema-first fix below - the Windows Property System's own
+                    // internal state for this schema GUID appears to get stuck once it has ever
+                    // failed/truncated on a machine, and a same-process Unregister+Register pair isn't
+                    // always enough to clear that. Letting this failure abort the ENTIRE install (which
+                    // also aborts enrollment and starting the service, i.e. actual DLP protection) over
+                    // a cosmetic Explorer column is the wrong trade-off - log it and move on instead.
+                    try
+                    {
+                        RegisterClassificationColumn();
+                        Console.WriteLine("CompanyDlp.ShellExtension (Classification Explorer column) registered.");
+                    }
+                    catch (Exception classificationColumnException)
+                    {
+                        Console.Error.WriteLine(
+                            "WARNING: CompanyDlp.ShellExtension (Classification Explorer column) failed to register - " +
+                            "continuing without it, since it is a display-only feature and does not affect DLP " +
+                            "enforcement. Details: " + classificationColumnException);
+                    }
                 }
                 else
                 {
@@ -82,6 +103,15 @@ namespace CompanyDlp.ShellExtension.Register
                     "CompanyDlp.Classification.propdesc must be deployed next to CompanyDlp.ShellExtension.Register.exe.",
                     propDescPath);
             }
+
+            // PSRegisterPropertySchema is documented as a one-time-per-install call - re-registering
+            // the same schema path (which happens on every run of deploy-agent-portable.ps1, since it
+            // wipes and recreates C:\Program Files\CompanyDlp from scratch each time) is unsupported
+            // and can itself surface as the same 0x000401A0 (INPLACE_S_TRUNCATED) failure checked
+            // below. PSUnregisterPropertySchema first guarantees any stale prior registration for this
+            // exact path is gone before re-registering - best-effort, its result is intentionally
+            // ignored (there may be nothing registered yet, e.g. on a genuinely first install).
+            PSUnregisterPropertySchema(propDescPath);
 
             // PSRegisterPropertySchema is one of the specific Windows APIs where "nonzero but not
             // negative" is still a real failure, not merely informational: 0x000401A0

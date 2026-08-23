@@ -41,7 +41,7 @@ namespace CompanyDlp.ShellExtension
                 {
                     response is not null
                         ? new DlpPropertyPage(response)
-                        : new DlpPropertyPage("the Company DLP agent is not reachable right now.")
+                        : new DlpPropertyPage("the Al-Ameen agent is not reachable right now.")
                 };
             }
             catch (System.Exception exception)

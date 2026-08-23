@@ -267,7 +267,7 @@ function showDownloadBlockedAlert(downloadItem) {
         {
           type: "basic",
           iconUrl: "icon128.png",
-          title: "Company DLP",
+          title: "Al-Ameen",
           message: "Download blocked by company security policy."
         },
         () => void chrome.runtime.lastError
@@ -308,7 +308,7 @@ function showDownloadBlockedPage(downloadItem) {
 }
 async function showNativeDownloadAlert(downloadItem) {
   const message =
-    "Company DLP blocked this download because downloads are not allowed by the current security policy.";
+    "Al-Ameen blocked this download because downloads are not allowed by the current security policy.";
 
   let tabId =
     Number.isInteger(downloadItem.tabId) && downloadItem.tabId >= 0
@@ -345,7 +345,7 @@ async function showNativeDownloadAlert(downloadItem) {
       {
         type: "basic",
         iconUrl: "icon128.png",
-        title: "Company DLP",
+        title: "Al-Ameen",
         message
       },
       () => void chrome.runtime.lastError
@@ -476,7 +476,7 @@ async function showExactCompanyDlpDownloadPopup(downloadItem) {
 
         const footer = document.createElement("div");
         footer.textContent =
-          "Company DLP • Action blocked by company security policy";
+          "Al-Ameen • Action blocked by company security policy";
 
         Object.assign(footer.style, {
           font: "500 11px Arial,sans-serif",

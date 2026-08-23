@@ -10,7 +10,9 @@
 #   .\publish\                          (already-built, already-signed artifacts\publish output)
 #   .\Scripts\                          (copies of the register-*.ps1 helper scripts)
 #   .\portable-config.json              (tenantId/backendBaseUrl/policy key/extension ids - filled
-#                                         in once when the package was built)
+#                                         in once when the package was built. firefoxExtensionId/
+#                                         firefoxExtensionUpdateUrl may be empty strings - Firefox
+#                                         coverage is optional; see build-portable-agent-package.ps1)
 #   .\CompanyDlpCodeSigningRoot.cer     (OPTIONAL - only present if the package was built with a
 #                                         self-signed code-signing certificate instead of a real
 #                                         CA-issued one; see build-portable-agent-package.ps1's
@@ -378,6 +380,16 @@ $policy.browser.chromeExtensionId = $config.chromeExtensionId
 $policy.browser.chromeExtensionUpdateUrl = $config.chromeExtensionUpdateUrl
 $policy.browser.edgeExtensionId = $config.edgeExtensionId
 $policy.browser.edgeExtensionUpdateUrl = $config.edgeExtensionUpdateUrl
+
+# Add-Member -Force (not dot-assignment) for the same reason as buildCommit/buildTimestampUtc below -
+# a portable-config.json built before Firefox support existed won't have these properties at all, and
+# a package built without Firefox parameters carries them as empty strings rather than omitting them
+# (see build-portable-agent-package.ps1) - either way this must not throw.
+$firefoxExtensionId = if ($config.PSObject.Properties.Name -contains "firefoxExtensionId") { $config.firefoxExtensionId } else { "" }
+$firefoxExtensionUpdateUrl = if ($config.PSObject.Properties.Name -contains "firefoxExtensionUpdateUrl") { $config.firefoxExtensionUpdateUrl } else { "" }
+$policy.browser | Add-Member -NotePropertyName "firefoxExtensionId" -NotePropertyValue $firefoxExtensionId -Force
+$policy.browser | Add-Member -NotePropertyName "firefoxExtensionUpdateUrl" -NotePropertyValue $firefoxExtensionUpdateUrl -Force
+
 $policy.backend.tenantId = $tenantId
 $policy.backend.baseUrl = $backendUri.AbsoluteUri.TrimEnd('/')
 $policy.backend.policySigningPublicKeyPem = $policySigningPublicKeyPem
@@ -406,7 +418,7 @@ Set-LockdownRecursive -Path $dataDir -ContainerGrants @("SYSTEM:(OI)(CI)F", "Adm
 
 $serviceExe = Join-Path $installDir "Service\CompanyDlp.Service.exe"
 Set-InstallProgress "Registering the background service..."
-sc.exe create CompanyDlp binPath= "`"$serviceExe`"" start= auto DisplayName= "Company DLP Service" | Out-Null
+sc.exe create CompanyDlp binPath= "`"$serviceExe`"" start= auto DisplayName= "Al-Ameen Service" | Out-Null
 sc.exe description CompanyDlp "Company endpoint data loss prevention service" | Out-Null
 
 $desktopExe = Join-Path $installDir "Desktop\CompanyDlp.Desktop.exe"
@@ -418,7 +430,7 @@ Set-InstallProgress "Registering shell extension..."
 Set-InstallProgress "Registering browser integration..."
 & (Join-Path $scriptsRoot "register-native-host-production.ps1") -NativeHostExe (Join-Path $installDir "NativeHost\CompanyDlp.NativeHost.exe") -ExtensionIds @($config.chromeExtensionId, $config.edgeExtensionId)
 Set-InstallProgress "Registering browser extension force-install policy..."
-& (Join-Path $scriptsRoot "register-browser-force-install.ps1") -ChromeExtensionId $config.chromeExtensionId -ChromeExtensionUpdateUrl $config.chromeExtensionUpdateUrl -EdgeExtensionId $config.edgeExtensionId -EdgeExtensionUpdateUrl $config.edgeExtensionUpdateUrl
+& (Join-Path $scriptsRoot "register-browser-force-install.ps1") -ChromeExtensionId $config.chromeExtensionId -ChromeExtensionUpdateUrl $config.chromeExtensionUpdateUrl -EdgeExtensionId $config.edgeExtensionId -EdgeExtensionUpdateUrl $config.edgeExtensionUpdateUrl -FirefoxExtensionId $firefoxExtensionId -FirefoxExtensionXpiUrl $firefoxExtensionUpdateUrl
 
 # [Environment]::SetEnvironmentVariable(..., "Machine") only writes to the registry - it does NOT
 # update this already-running PowerShell process's own environment block, so the `& $serviceExe
