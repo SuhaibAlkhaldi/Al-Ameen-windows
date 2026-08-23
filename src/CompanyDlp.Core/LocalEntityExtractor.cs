@@ -68,8 +68,12 @@ public sealed class LocalEntityExtractor : IDisposable
         ["موقع جغرافي"] = "LOCATION"
     };
 
-    // GLiNER's own WhitespaceTokenSplitter regex, unchanged.
-    private static readonly Regex WordSplitter = new(@"\w+(?:[-_]\w+)*|\S", RegexOptions.Compiled);
+    // GLiNER's own WhitespaceTokenSplitter regex, unchanged - verified byte-for-byte identical
+    // against the real installed `gliner` package's gliner/data_processing/tokenizer.py source, and
+    // cross-checked by running both regexes against the same real sentences and diffing the token
+    // boundaries (see StructuredEntityCorrectionTests.cs for the pinned regression case). internal
+    // (not private) solely so that test can call it directly without needing the ONNX model loaded.
+    internal static readonly Regex WordSplitter = new(@"\w+(?:[-_]\w+)*|\S", RegexOptions.Compiled);
 
     private readonly ExtensionsML.SentencePieceTokenizer _tokenizer;
     private readonly InferenceSession _session;
@@ -175,18 +179,52 @@ public sealed class LocalEntityExtractor : IDisposable
 
         var spans = DecodeSpans(logits, numWords, numClasses);
 
+        // Independent of the model entirely - see StructuredEntityValidator for why a plain regex
+        // beats GLiNER specifically for full email addresses, and why this runs against the raw text
+        // (not the model's word/span decode) using character offsets available here in Extract()
+        // before spans are collapsed into offset-less DetectedEntity values.
+        var emailMatches = StructuredEntityValidator.FindEmails(text);
+
         var entities = new List<DetectedEntity>();
         var seen = new HashSet<(string Type, string Value)>();
         foreach (var span in spans)
         {
-            var value = text[words[span.Start].Start..words[span.End].End].Trim();
+            var charStart = words[span.Start].Start;
+            var charEnd = words[span.End].End;
+
+            // Any model span touching a real email address is either the address itself (split into
+            // fragments) or noise inside it - the regex match below already covers this region more
+            // accurately, so drop the model's guess here rather than keep it alongside a duplicate/
+            // conflicting EMAIL entity.
+            if (emailMatches.Any(e => StructuredEntityValidator.RangesOverlap(charStart, charEnd, e.Start, e.End)))
+            {
+                continue;
+            }
+
+            var value = text[charStart..charEnd].Trim();
             if (value.Length == 0) continue;
 
             var label = AllLabels[span.ClassIndex];
             var type = LabelMap.GetValueOrDefault(label, label.ToUpperInvariant());
+
+            // Luhn-based reclassification only ever applies to what the model already called one of
+            // these two - see StructuredEntityValidator.ReclassifyDigitEntityType.
+            if (type is "CREDIT_CARD" or "NATIONAL_ID")
+            {
+                type = StructuredEntityValidator.ReclassifyDigitEntityType(value);
+            }
+
             if (seen.Add((type, value.ToLowerInvariant())))
             {
                 entities.Add(new DetectedEntity(type, value));
+            }
+        }
+
+        foreach (var (value, _, _) in emailMatches)
+        {
+            if (seen.Add(("EMAIL", value.ToLowerInvariant())))
+            {
+                entities.Add(new DetectedEntity("EMAIL", value));
             }
         }
 
