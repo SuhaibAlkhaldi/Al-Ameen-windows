@@ -194,6 +194,7 @@
                                                    "software.execute-unapproved":  false,
                                                    "file.encrypt":  true,
                                                    "file.decrypt":  true,
+                                                   "file.print":  false,
                                                    "browser.download":  false
                                                },
                         "grants":  [
