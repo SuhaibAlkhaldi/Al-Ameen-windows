@@ -47,5 +47,10 @@ secrets/
 .DS_Store
 Thumbs.db
 
-# Local-only AI model assets (large binaries, ~1.1GB - deployed separately, never committed)
-src/CompanyDlp.Service/AiModel/
+# Local-only AI model assets (large binaries, ~1.1GB - deployed separately, never committed).
+# Ignored by extension rather than the whole AiModel/ directory specifically so that directory's own
+# README.md (documenting where these files come from and where a backup lives) stays tracked - git
+# cannot re-include a file under a directory that's excluded wholesale, only under one excluded by
+# narrower patterns like these.
+src/CompanyDlp.Service/AiModel/*.onnx
+src/CompanyDlp.Service/AiModel/*.model
