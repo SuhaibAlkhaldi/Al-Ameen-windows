@@ -163,10 +163,13 @@ public sealed class SoftwarePolicy
     public List<string> AllowedSha256 { get; set; } = [];
 }
 
-// v1: AppLocker only. WDAC was deliberately rejected for CliExecute - it applies device-wide, not
-// per-user/per-group, which doesn't fit this policy's per-employee grant model the way AppLocker's
-// native per-user/group Deny rules do (see CliExecutionPolicyManager). "AuditOnly" pushes no
-// enforcement rule at all; only "AppLocker" pushes/withdraws the Deny rule.
+// v1: this mode name is kept as "AppLocker" for backend/config compatibility even though AppLocker is
+// no longer used anywhere in this feature - see CliExecutionPolicyManager's class comment for the full,
+// live-confirmed-twice story of why. Simply enabling AppLocker's Exe rule collection at all (regardless
+// of rule content or targeting) was proven to freeze Windows Shell's Start Menu/Search on affected
+// devices, so this value now means "CLI blocking is turned on"; the actual mechanism is always a
+// per-user Explorer DisallowRun/RestrictRun policy for all five restricted executables. "AuditOnly"
+// pushes nothing; only "AppLocker" pushes/withdraws that policy. Do not reintroduce AppLocker here.
 public static class CliEnforcementModes
 {
     public const string AuditOnly = "AuditOnly";
@@ -178,13 +181,14 @@ public sealed class CliPolicy
     public bool Enabled { get; set; } = true;
     public string EnforcementMode { get; set; } = CliEnforcementModes.AuditOnly;
 
-    // Publisher-rule targets (see CliExecutionPolicyManager) - matched by Authenticode signer, not
-    // literal path, so a copy/rename of the same signed binary is still caught. pwsh.exe (PowerShell
-    // 7+) and powershell_ise.exe are included even though they may not be installed on every device;
-    // an AppLocker rule for a file that doesn't exist locally is simply inert, not an error.
+    // Documents the full set of CLI executables this policy restricts; the actual enforcement mechanism
+    // (a per-user Explorer DisallowRun/RestrictRun policy for all five) is hardcoded in
+    // CliExecutionPolicyManager, not driven by this list. pwsh.exe (PowerShell 7+), powershell_ise.exe,
+    // and wt.exe (Windows Terminal) are included even though they may not be installed on every device -
+    // restricting a program that doesn't exist locally is simply inert, not an error.
     public List<string> RestrictedExecutableNames { get; set; } =
     [
-        "cmd.exe", "powershell.exe", "powershell_ise.exe", "pwsh.exe"
+        "cmd.exe", "powershell.exe", "powershell_ise.exe", "pwsh.exe", "wt.exe"
     ];
 
     // Independent of Enabled/EnforcementMode above by design - CliSensitiveCommand detection (see

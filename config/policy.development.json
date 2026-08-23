@@ -35,6 +35,18 @@
                     "edgeExtensionId":  "",
                     "edgeExtensionUpdateUrl":  ""
                 },
+    "cli":  {
+                "enabled":  true,
+                "enforcementMode":  "AuditOnly",
+                "restrictedExecutableNames":  [
+                                                   "cmd.exe",
+                                                   "powershell.exe",
+                                                   "powershell_ise.exe",
+                                                   "pwsh.exe",
+                                                   "wt.exe"
+                                               ],
+                "sensitiveCommandDetectionEnabled":  true
+            },
     "usb":  {
                 "enabled":  true,
                 "enforcementMode":  "AuditOnly",

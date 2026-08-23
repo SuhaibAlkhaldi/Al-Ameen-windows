@@ -82,19 +82,31 @@ public static class SoftwareInstallerClassifier
         return InstallerClassification.NotInstaller("NoInstallerSignal");
     }
 
-    // A bare Contains(".appx") false-positives on legitimate Windows activity: backgroundTaskHost.exe
-    // (a Microsoft system process running an already-installed UWP app's background task) is launched
-    // with a command line like "-ServerName:App.AppXe9cvj1thv1hmcw0cs98xm3r97tyzy2xs.mca" - the package
-    // family name there contains the literal substring ".appx" purely by coincidence of Windows' own
-    // naming scheme, nowhere near an actual file path. Requiring the extension to end a whitespace/quote
-    // -delimited token (i.e. look like a real "...\something.appx" argument) avoids that false positive
-    // while still catching real installer command lines like `Add-AppxPackage "C:\app.appxbundle"`.
+    // Was previously a raw commandLine.Contains(extension) over the whole string - matched the
+    // extension as a substring ANYWHERE, not just as a real file extension at the end of a path/token.
+    // Confirmed live 2026-08-17: backgroundTaskHost.exe's legitimate Windows-internal invocation
+    // ("-ServerName:App.AppX3yypww7qrft4zqhh57xaatcrnp803bj7.mca", spawned continuously for built-in
+    // UWP extensions like Desktop Spotlight) contains the literal substring ".appx" purely as part of
+    // an auto-generated package-family GUID ("App.AppX...") - Contains(".appx") matched it every time,
+    // producing 62+ false "Software Install" audit events for one benign system process and zero signal
+    // for real installers. Tokenizing on whitespace and checking EndsWith per token fixes this: a real
+    // installer argument (quoted or not) always has the extension as the actual suffix of its path/
+    // filename token, while this false-positive case has other characters (".mca") after it in the
+    // same token.
     private static bool ContainsPackageArgument(string commandLine, IEnumerable<string> extensions)
     {
         if (string.IsNullOrWhiteSpace(commandLine)) return false;
-        var tokens = commandLine.Split([' ', '"', '\t'], StringSplitOptions.RemoveEmptyEntries);
-        return tokens.Any(token => extensions.Any(extension =>
-            token.EndsWith(extension, StringComparison.OrdinalIgnoreCase)));
+
+        foreach (var rawToken in commandLine.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var token = rawToken.Trim('"', '\'');
+            if (extensions.Any(extension => token.EndsWith(extension, StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool ContainsDelimitedInstallerToken(string executableName)

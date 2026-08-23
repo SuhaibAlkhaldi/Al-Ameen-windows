@@ -35,6 +35,18 @@
                     "blockFilePaste":  true,
                     "blockImagePaste":  true
                 },
+    "cli":  {
+                "enabled":  true,
+                "enforcementMode":  "AppLocker",
+                "restrictedExecutableNames":  [
+                                                   "cmd.exe",
+                                                   "powershell.exe",
+                                                   "powershell_ise.exe",
+                                                   "pwsh.exe",
+                                                   "wt.exe"
+                                               ],
+                "sensitiveCommandDetectionEnabled":  true
+            },
     "usb":  {
                 "enabled":  true,
                 "enforcementMode":  "Block",
@@ -162,7 +174,9 @@
                     "policySigningPublicKeyPem":  "REPLACE_WITH_ECDSA_PUBLIC_KEY_PEM",
                     "authenticationMode":  "DeviceBearerToken",
                     "credentialName":  "agent-access-token",
-                    "heartbeatSeconds":  30
+                    "heartbeatSeconds":  30,
+                    "buildCommit":  "",
+                    "buildTimestampUtc":  ""
                 },
     "permissions":  {
                         "defaultPermissions":  {
