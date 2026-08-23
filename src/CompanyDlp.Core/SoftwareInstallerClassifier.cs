@@ -82,10 +82,19 @@ public static class SoftwareInstallerClassifier
         return InstallerClassification.NotInstaller("NoInstallerSignal");
     }
 
+    // A bare Contains(".appx") false-positives on legitimate Windows activity: backgroundTaskHost.exe
+    // (a Microsoft system process running an already-installed UWP app's background task) is launched
+    // with a command line like "-ServerName:App.AppXe9cvj1thv1hmcw0cs98xm3r97tyzy2xs.mca" - the package
+    // family name there contains the literal substring ".appx" purely by coincidence of Windows' own
+    // naming scheme, nowhere near an actual file path. Requiring the extension to end a whitespace/quote
+    // -delimited token (i.e. look like a real "...\something.appx" argument) avoids that false positive
+    // while still catching real installer command lines like `Add-AppxPackage "C:\app.appxbundle"`.
     private static bool ContainsPackageArgument(string commandLine, IEnumerable<string> extensions)
     {
         if (string.IsNullOrWhiteSpace(commandLine)) return false;
-        return extensions.Any(extension => commandLine.Contains(extension, StringComparison.OrdinalIgnoreCase));
+        var tokens = commandLine.Split([' ', '"', '\t'], StringSplitOptions.RemoveEmptyEntries);
+        return tokens.Any(token => extensions.Any(extension =>
+            token.EndsWith(extension, StringComparison.OrdinalIgnoreCase)));
     }
 
     private static bool ContainsDelimitedInstallerToken(string executableName)

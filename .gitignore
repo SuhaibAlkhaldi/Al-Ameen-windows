@@ -49,3 +49,8 @@ Thumbs.db
 
 # Local-only AI model assets (large binaries, ~1.1GB - deployed separately, never committed)
 src/CompanyDlp.Service/AiModel/
+
+# Local-only Tesseract OCR language data (deployed separately, never committed)
+src/CompanyDlp.Service/TessData/
+
+nul

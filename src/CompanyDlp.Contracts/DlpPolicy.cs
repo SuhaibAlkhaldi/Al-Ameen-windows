@@ -14,6 +14,7 @@ public sealed class DlpPolicy
     public SoftwarePolicy Software { get; set; } = new();
     public CliPolicy Cli { get; set; } = new();
     public FileProtectionPolicy FileProtection { get; set; } = new();
+    public PrintPolicy Print { get; set; } = new();
     public FileClassificationPolicy FileClassification { get; set; } = new();
     public BackendPolicy Backend { get; set; } = new();
     public PermissionPolicy Permissions { get; set; } = new();
@@ -199,4 +200,10 @@ public sealed class FileProtectionPolicy
     public bool DeletePlaintextAfterVerifiedEncryption { get; set; } = true;
     public bool KeepEncryptedFileAfterDecryption { get; set; } = true;
     public long MaximumFileSizeBytes { get; set; } = 10L * 1024 * 1024 * 1024;
+}
+
+public sealed class PrintPolicy
+{
+    public bool Enabled { get; set; } = true;
+    public string EnforcementMode { get; set; } = "AuditOnly";
 }

@@ -156,6 +156,7 @@ public static class ProductionReadinessValidator
         RequireDefaultDeny(permissions, ActionKeys.UsbMobileDevice, failures);
         RequireDefaultDeny(permissions, ActionKeys.SoftwareInstall, failures);
         RequireDefaultDeny(permissions, ActionKeys.SoftwareExecuteUnapproved, failures);
+        RequireDefaultDeny(permissions, ActionKeys.FilePrint, failures);
     }
 
     private static void RequireDefaultDeny(PermissionPolicy permissions, string actionKey, List<string> failures)

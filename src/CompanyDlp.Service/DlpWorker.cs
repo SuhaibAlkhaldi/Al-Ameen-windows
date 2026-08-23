@@ -6,6 +6,7 @@ public sealed class DlpWorker(
     BrowserPolicyManager browserPolicyManager,
     UsbProtectionMonitor usbMonitor,
     ProcessProtectionMonitor processMonitor,
+    PrintProtectionMonitor printMonitor,
     SoftwareProtectionMonitor softwareMonitor,
     WindowsAppControlAuditMonitor windowsAppControlAuditMonitor,
     CliExecutionPolicyManager cliExecutionPolicyManager,
@@ -41,6 +42,7 @@ public sealed class DlpWorker(
                 }
 
                 await processMonitor.TickAsync(stoppingToken);
+                await printMonitor.TickAsync(stoppingToken);
                 await softwareMonitor.TickAsync(stoppingToken);
                 await windowsAppControlAuditMonitor.TickAsync(stoppingToken);
                 await cliExecutionAuditMonitor.TickAsync(stoppingToken);

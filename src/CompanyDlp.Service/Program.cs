@@ -34,6 +34,14 @@ builder.Services.AddSingleton(provider =>
         ?? Path.Combine(baseDirectory, "AiModel", "spm.model");
     return new LocalEntityExtractor(onnxModelPath, tokenizerModelPath);
 });
+builder.Services.AddSingleton(provider =>
+{
+    var baseDirectory = AppContext.BaseDirectory;
+    var tessDataPath = provider.GetRequiredService<IConfiguration>()["LocalAi:TessDataPath"]
+        ?? Path.Combine(baseDirectory, "TessData");
+    var ocrLanguages = provider.GetRequiredService<IConfiguration>()["LocalAi:OcrLanguages"] ?? "eng+ara";
+    return new ImageOcrExtractor(tessDataPath, ocrLanguages);
+});
 builder.Services.AddSingleton<LocalAiFileClassificationProvider>();
 builder.Services.AddSingleton<FileClassificationService>();
 builder.Services.AddSingleton<FileClassificationCache>();
@@ -59,6 +67,7 @@ builder.Services.AddSingleton<UsbBaselineStore>();
 builder.Services.AddSingleton<UsbDeviceController>();
 builder.Services.AddSingleton<UsbProtectionMonitor>();
 builder.Services.AddSingleton<ProcessProtectionMonitor>();
+builder.Services.AddSingleton<PrintProtectionMonitor>();
 builder.Services.AddSingleton<SoftwareProtectionMonitor>();
 builder.Services.AddSingleton<WindowsAppControlAuditMonitor>();
 builder.Services.AddSingleton<CliEnforcementHealthChecker>();
@@ -77,6 +86,7 @@ var host = builder.Build();
 var policyStore = host.Services.GetRequiredService<PolicyStore>();
 var policy = policyStore.Reload();
 ValidateProductionReadiness(policy, enrollmentMode, host.Services.GetRequiredService<AgentCredentialStore>());
+DocumentTextExtractor.ConfigureImageOcr(host.Services.GetRequiredService<ImageOcrExtractor>());
 
 if (enrollmentMode)
 {

@@ -23,11 +23,16 @@ public sealed class FileInventoryScanner(
     InteractiveUserContextProvider interactiveUserContextProvider,
     ILogger<FileInventoryScanner> logger)
 {
-    // Per-path last-seen write time, kept in memory only - avoids re-hashing and re-classifying
-    // every file in the watched folders on every tick. A service restart re-scans everything once
-    // (cheap: cache.TryGet short-circuits any file already classified by hash), which is simpler
-    // and more robust than persisting a separate "files seen" index.
+    // Per-path last-seen write time - avoids re-hashing and re-classifying every file in the
+    // watched folders on every tick. Bootstrapped from FileClassificationStatusStore's persisted
+    // LastSeenWriteTimeUtc on the first tick (see EnsureLastSeenWriteTimesBootstrapped), so a
+    // service restart doesn't lose it: confirmed live that without restoring this, a restart made
+    // every already-classified file look "new" again on the very next scan (FileClassificationCache
+    // is hash-keyed, and a file's hash changes the moment it's watermarked, so even re-hashing
+    // after a restart can never reproduce the pre-watermark hash that was actually cached) -
+    // triggering a full unnecessary reclassification AND stacking another watermark copy on top.
     private readonly Dictionary<string, DateTimeOffset> _lastSeenWriteTimes = new(StringComparer.OrdinalIgnoreCase);
+    private bool _lastSeenWriteTimesBootstrapped;
 
     // In-memory only marker for the "Scanning" status - a classify request currently in flight for
     // this path. Never persisted: if the service restarts mid-classification, there is no in-flight
@@ -58,6 +63,8 @@ public sealed class FileInventoryScanner(
         var fileClassification = policy.FileClassification;
         if (!fileClassification.Enabled || !fileClassification.BackgroundScanEnabled) return;
 
+        EnsureLastSeenWriteTimesBootstrapped();
+
         var context = interactiveUserContextProvider.GetActiveConsoleUser();
         var wasBackfillPending = !cache.BackfillCompleted;
 
@@ -76,6 +83,21 @@ public sealed class FileInventoryScanner(
         }
 
         if (wasBackfillPending) cache.BackfillCompleted = true;
+    }
+
+    // Runs once, before this process's very first tick - see _lastSeenWriteTimes's comment for why.
+    private void EnsureLastSeenWriteTimesBootstrapped()
+    {
+        if (_lastSeenWriteTimesBootstrapped) return;
+        _lastSeenWriteTimesBootstrapped = true;
+
+        foreach (var entry in statusStore.GetAll())
+        {
+            if (entry.LastSeenWriteTimeUtc is { } writeTime)
+            {
+                _lastSeenWriteTimes[entry.Path] = writeTime;
+            }
+        }
     }
 
     private async Task ClassifyIfNeededAsync(
@@ -155,7 +177,8 @@ public sealed class FileInventoryScanner(
             // different, older file that happened to have identical content, so cached.ClassifiedAtUtc
             // would show a stale/misleading timestamp here.
             statusStore.Set(new FileClassificationStatusEntry(
-                taggedNormalized, FileClassificationStatuses.UpToDate, hash, scannedAtUtc, cached.ReasonCode, DateTimeOffset.UtcNow));
+                taggedNormalized, FileClassificationStatuses.UpToDate, hash, scannedAtUtc, cached.ReasonCode, DateTimeOffset.UtcNow,
+                LastSeenWriteTimeUtc: effectiveWriteTimeUtc));
             return;
         }
 
@@ -217,7 +240,8 @@ public sealed class FileInventoryScanner(
                 _lastSeenWriteTimes[taggedPath] = effectiveWriteTimeUtc;
                 if (taggedNormalized != normalized) statusStore.Delete(normalized);
                 statusStore.Set(new FileClassificationStatusEntry(
-                    taggedNormalized, FileClassificationStatuses.UpToDate, hash, scannedAtUtc, result.ReasonCode, DateTimeOffset.UtcNow));
+                    taggedNormalized, FileClassificationStatuses.UpToDate, hash, scannedAtUtc, result.ReasonCode, DateTimeOffset.UtcNow,
+                    LastSeenWriteTimeUtc: effectiveWriteTimeUtc));
             }
         }
         catch (Exception exception)

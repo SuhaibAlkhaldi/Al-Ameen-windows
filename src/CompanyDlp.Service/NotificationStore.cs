@@ -18,7 +18,8 @@ public sealed class NotificationStore
         string title,
         string message,
         string severity = "Warning",
-        string action = "blocked")
+        string action = "blocked",
+        string requestPermissionUrl = "")
     {
         var now = DateTimeOffset.UtcNow;
         var key = string.Join('|', category, action, title, message, severity);
@@ -39,7 +40,8 @@ public sealed class NotificationStore
                 Title = title,
                 Message = message,
                 Severity = severity,
-                Action = action
+                Action = action,
+                RequestPermissionUrl = requestPermissionUrl
             };
 
             _notifications.Enqueue(notification);

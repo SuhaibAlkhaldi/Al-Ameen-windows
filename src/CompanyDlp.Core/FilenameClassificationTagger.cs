@@ -32,6 +32,13 @@ public static class FilenameClassificationTagger
     private static readonly Regex ExistingTagPrefix =
         new(@"^\[(Public|Internal|Secret|Very Secret)\]\s+", RegexOptions.Compiled);
 
+    // Same tag vocabulary as ExistingTagPrefix, but not anchored to the start of the string - used
+    // to recognize a tag anywhere within an arbitrary piece of text (e.g. a print job's title,
+    // which some applications suffix with their own name after the document title). Built from the
+    // same TagsByTier values so the two can never drift apart.
+    private static readonly Regex TagAnywhere =
+        new(@"\[(Public|Internal|Secret|Very Secret)\]", RegexOptions.Compiled);
+
     // fileName is the name only (Path.GetFileName), never a full path. Returns the file name the
     // file SHOULD have for the given tier - identical to fileName (no rename needed) only if it's
     // already correctly tagged, or the tier is unrecognized (falls back to untagged rather than
@@ -40,5 +47,29 @@ public static class FilenameClassificationTagger
     {
         var untagged = ExistingTagPrefix.Replace(fileName, "");
         return TagsByTier.TryGetValue(classificationTier, out var tag) ? tag + " " + untagged : untagged;
+    }
+
+    // Reverse lookup: given arbitrary text that may contain one of this class's own tags somewhere
+    // in it (e.g. "[Secret] Report.pdf - Adobe Acrobat", a print job's title), resolve the
+    // classification tier it represents. Returns false if no recognized tag is present - callers
+    // must treat that as "classification unknown", not "Public", and fail closed accordingly.
+    public static bool TryParseTierFromTaggedText(string text, out string? classificationTier)
+    {
+        classificationTier = null;
+        if (string.IsNullOrEmpty(text)) return false;
+
+        var match = TagAnywhere.Match(text);
+        if (!match.Success) return false;
+
+        var tagLabel = match.Groups[1].Value;
+        foreach (var (tier, tag) in TagsByTier)
+        {
+            if (tag.Equals($"[{tagLabel}]", StringComparison.OrdinalIgnoreCase))
+            {
+                classificationTier = tier;
+                return true;
+            }
+        }
+        return false;
     }
 }

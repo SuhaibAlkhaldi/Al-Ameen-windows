@@ -225,6 +225,7 @@ public sealed class PolicyStore(
                 [ActionKeys.SoftwareExecuteUnapproved] = false,
                 [ActionKeys.FileEncrypt] = true,
                 [ActionKeys.FileDecrypt] = true,
+                [ActionKeys.FilePrint] = false,
                 [ActionKeys.AgentSession] = true,
 
                 // Deny by default like every other channel above: this product's real customer base
