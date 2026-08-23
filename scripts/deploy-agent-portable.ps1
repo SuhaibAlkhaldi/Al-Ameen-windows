@@ -414,7 +414,18 @@ Invoke-WithRetry -Label "Set-Content (policy.json)" -HealPath $dataDir -Action {
 
 Set-InstallProgress "Locking down file permissions..."
 Set-LockdownRecursive -Path $installDir -ContainerGrants @("SYSTEM:(OI)(CI)F", "Administrators:(OI)(CI)F", "Users:(OI)(CI)RX") -LeafGrants @("SYSTEM:F", "Administrators:F", "Users:RX")
-Set-LockdownRecursive -Path $dataDir -ContainerGrants @("SYSTEM:(OI)(CI)F", "Administrators:(OI)(CI)F") -LeafGrants @("SYSTEM:F", "Administrators:F")
+# $dataDir (C:\ProgramData\CompanyDlp) holds the DPAPI(LocalMachine)-protected device credential,
+# agent identity, and cached policy files that PipeServer's ProtectFile handler reads while running
+# WindowsIdentity.RunImpersonatedAsync as the calling interactive user - not SYSTEM, and not an
+# elevated token even when that user is an Administrator, since Explorer/the shell context menu never
+# runs elevated. Without a Users:RX grant here, that impersonated read fails, File.Exists() swallows
+# the AccessDenied and returns false, and AgentCredentialStore.Load() returns null - surfacing as "The
+# Company DLP agent is not enrolled" on every single encrypt/decrypt attempt regardless of how many
+# times the device re-enrolls, since enrollment was never the actual problem. Confirmed live. Read-only
+# access here doesn't weaken anything real: DPAPI LocalMachine protection (not the file ACL) is what
+# actually gates the plaintext secret, and any process on the machine can already call
+# CryptUnprotectData with that scope regardless of this file's ACL.
+Set-LockdownRecursive -Path $dataDir -ContainerGrants @("SYSTEM:(OI)(CI)F", "Administrators:(OI)(CI)F", "Users:(OI)(CI)RX") -LeafGrants @("SYSTEM:F", "Administrators:F", "Users:RX")
 
 $serviceExe = Join-Path $installDir "Service\CompanyDlp.Service.exe"
 Set-InstallProgress "Registering the background service..."
