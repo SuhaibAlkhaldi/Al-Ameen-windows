@@ -55,6 +55,7 @@ public sealed class PolicyStore(
         target.Software = localSource.Software;
         target.Cli = localSource.Cli;
         target.FileProtection = localSource.FileProtection;
+        target.Print = localSource.Print;
         target.FileClassification = localSource.FileClassification;
         target.Backend = localSource.Backend;
         target.Runtime = localSource.Runtime;

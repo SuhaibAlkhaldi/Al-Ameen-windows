@@ -14,10 +14,15 @@ namespace CompanyDlp.Service;
 // Detection uses a WMI event watcher on Win32_PrintJob creation - the same System.Management
 // dependency ProcessProtectionMonitor already uses for Win32_Process lookups. A job lands in the
 // spool queue after the source app has rendered/spooled it but before it reaches the physical
-// printer, giving a real (if brief, ~1-2 second) window to cancel via Delete() if not permitted.
-// This is a known, accepted limitation (confirmed with the user) rather than instant/page-0
-// blocking - a fully bulletproof solution would need a native Print Processor/Port Monitor DLL,
-// a much larger separate effort out of scope here.
+// printer, giving a real (if brief) window to cancel via Delete() if not permitted. This is a
+// known, accepted limitation (confirmed with the user) rather than instant/page-0 blocking - a
+// fully bulletproof solution would need a native Print Processor/Port Monitor DLL, a much larger
+// separate effort out of scope here. That window is spent entirely on our own reaction latency, so
+// this class is a dedicated BackgroundService (not ticked from DlpWorker's shared, unrelated
+// screen-recording-poll-interval loop) woken immediately by a semaphore the WMI callback releases,
+// rather than waiting for a shared polling cadence to get around to it - confirmed live
+// (2026-08-23) that the ~1.25s combined latency of a 1-second WMI WITHIN clause plus a 250ms shared
+// tick delay was enough for this printer to already be mid-print by the time Delete() ran.
 //
 // Resolving which file is being printed: Windows print jobs do not reliably carry the original
 // source file's full path - Win32_PrintJob.Document is just the job's display title, which varies
@@ -38,27 +43,57 @@ public sealed class PrintProtectionMonitor(
     FileClassificationCache classificationCache,
     AuditLogger auditLogger,
     NotificationStore notificationStore,
-    ILogger<PrintProtectionMonitor> logger)
+    ILogger<PrintProtectionMonitor> logger) : BackgroundService
 {
     private readonly ConcurrentQueue<DetectedPrintJob> _pending = new();
+
+    // Released by the WMI callback thread the instant a job is detected - SemaphoreSlim.Release()
+    // does no I/O and is safe to call there. ExecuteAsync's WaitAsync below wakes up as soon as this
+    // fires, instead of sitting idle until a shared external loop happens to poll this class again.
+    private readonly SemaphoreSlim _signal = new(0, int.MaxValue);
     private ManagementEventWatcher? _watcher;
     private bool _watcherStartAttempted;
 
-    public async Task TickAsync(CancellationToken cancellationToken)
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var policy = policyStore.Get();
-        if (!policy.Enabled || !policy.Print.Enabled)
+        while (!stoppingToken.IsCancellationRequested)
         {
-            StopWatcher();
-            return;
+            var policy = policyStore.Get();
+            if (!policy.Enabled || !policy.Print.Enabled)
+            {
+                StopWatcher();
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
+                continue;
+            }
+
+            EnsureWatcherStarted();
+
+            try
+            {
+                // The 1-second timeout is just so a policy flip (Print.Enabled -> false) or a
+                // watcher that failed to start gets rechecked promptly even with no jobs arriving -
+                // the semaphore is what actually drives fast reaction to a real print job.
+                await _signal.WaitAsync(TimeSpan.FromSeconds(1), stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+
+            while (_pending.TryDequeue(out var job))
+            {
+                await HandleJobAsync(job, policy, stoppingToken);
+            }
         }
 
-        EnsureWatcherStarted();
-
-        while (_pending.TryDequeue(out var job))
-        {
-            await HandleJobAsync(job, policy, cancellationToken);
-        }
+        StopWatcher();
     }
 
     private void EnsureWatcherStarted()
@@ -68,8 +103,12 @@ public sealed class PrintProtectionMonitor(
 
         try
         {
+            // WITHIN 0.1 (not the WMI default of 1 second) - this is WMI's own polling interval for
+            // noticing the new Win32_PrintJob instance in the first place, well before this class's
+            // own dispatch even begins. See the class comment: confirmed live that a 1-second value
+            // here alone accounted for most of the missed cancellation window.
             _watcher = new ManagementEventWatcher(new WqlEventQuery(
-                "SELECT * FROM __InstanceCreationEvent WITHIN 1 WHERE TargetInstance ISA 'Win32_PrintJob'"));
+                "SELECT * FROM __InstanceCreationEvent WITHIN 0.1 WHERE TargetInstance ISA 'Win32_PrintJob'"));
             _watcher.EventArrived += OnPrintJobCreated;
             _watcher.Start();
         }
@@ -98,9 +137,10 @@ public sealed class PrintProtectionMonitor(
     }
 
     // Runs on a WMI callback thread - deliberately does no DI-scoped/async work here, just pulls
-    // the fields we need off the event and queues them for TickAsync to process on its own async
-    // context, matching how every other monitor in this class keeps its detection and its
-    // evaluate/enforce/audit work on separate, predictable execution contexts.
+    // the fields we need off the event, queues them, and releases the semaphore so ExecuteAsync
+    // wakes immediately on its own async context - matching how every other monitor in this class
+    // keeps its detection and its evaluate/enforce/audit work on separate, predictable execution
+    // contexts. Release() is a plain in-memory signal (no I/O), safe to call from this thread.
     private void OnPrintJobCreated(object sender, EventArrivedEventArgs e)
     {
         try
@@ -110,6 +150,7 @@ public sealed class PrintProtectionMonitor(
                 JobName: target["Name"]?.ToString() ?? "",
                 Document: target["Document"]?.ToString() ?? "",
                 Owner: target["Owner"]?.ToString() ?? ""));
+            _signal.Release();
         }
         catch (Exception exception)
         {
@@ -119,7 +160,17 @@ public sealed class PrintProtectionMonitor(
 
     private async Task HandleJobAsync(DetectedPrintJob job, DlpPolicy policy, CancellationToken cancellationToken)
     {
-        var resolved = ResolveClassification(job.Document, policy.FileClassification.WatchedFolders);
+        // Confirmed live (2026-08-23): the Document field on the __InstanceCreationEvent's
+        // TargetInstance (captured in OnPrintJobCreated) is sometimes still the generic placeholder
+        // "Local Downlevel Document" - the spooler hasn't finished writing the real title into
+        // Win32_PrintJob yet at the exact instant the instance-creation event fires, especially now
+        // that detection itself got much faster (see the class comment). A fresh, separate query by
+        // JobName immediately before classifying picks up the real title if it has landed by then,
+        // without slowing down detection itself - this happens after the job is already queued, not
+        // before. Same instance-lifetime reasoning as TryCancelJob's own re-query: never reuse a WMI
+        // object captured on the event-callback thread.
+        var document = RefreshDocumentTitle(job.JobName, job.Document);
+        var resolved = ResolveClassification(document, policy.FileClassification.WatchedFolders);
 
         var context = new ClientContext
         {
@@ -173,7 +224,7 @@ public sealed class PrintProtectionMonitor(
             ResourceSizeBytes = resolved.SizeBytes,
             ResourceSha256 = resolved.FileHash ?? "",
             ResourceClassification = resourceClassification,
-            Details = job.Document
+            Details = document
         }, context, cancellationToken);
 
         if (decision.IsAllowed) return;
@@ -287,6 +338,32 @@ public sealed class PrintProtectionMonitor(
         return false;
     }
 
+    // Best-effort: a fresh query that fails or comes back empty just means "no better answer than
+    // what we already had" - falls back to the original event-time title rather than blocking
+    // classification on this succeeding.
+    private static string RefreshDocumentTitle(string jobName, string fallback)
+    {
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                $"SELECT Document FROM Win32_PrintJob WHERE Name = '{jobName.Replace("'", "''")}'");
+            using var results = searcher.Get();
+            foreach (ManagementObject printJob in results)
+            {
+                using (printJob)
+                {
+                    var refreshed = printJob["Document"]?.ToString();
+                    if (!string.IsNullOrWhiteSpace(refreshed)) return refreshed;
+                }
+            }
+        }
+        catch
+        {
+            // Fall through to fallback below.
+        }
+        return fallback;
+    }
+
     private bool TryCancelJob(DetectedPrintJob job)
     {
         // Re-queried fresh by name rather than reusing a WMI object captured on the event-callback
@@ -302,7 +379,13 @@ public sealed class PrintProtectionMonitor(
             {
                 using (printJob)
                 {
-                    printJob.InvokeMethod("Delete", null);
+                    // Confirmed live (2026-08-23): InvokeMethod("Delete", null) throws
+                    // "This method is not implemented in any class" - Win32_PrintJob has no WMI
+                    // schema-defined method named "Delete" to invoke that way. Cancelling a WMI
+                    // instance is a generic operation (WMI's DeleteInstance), exposed on
+                    // ManagementObject as its own .Delete() method - not something to look up via
+                    // InvokeMethod, which only resolves class-defined methods.
+                    printJob.Delete();
                     found = true;
                 }
             }

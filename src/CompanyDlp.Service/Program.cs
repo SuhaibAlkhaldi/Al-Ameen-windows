@@ -100,7 +100,6 @@ builder.Services.AddSingleton<UsbBaselineStore>();
 builder.Services.AddSingleton<UsbDeviceController>();
 builder.Services.AddSingleton<UsbProtectionMonitor>();
 builder.Services.AddSingleton<ProcessProtectionMonitor>();
-builder.Services.AddSingleton<PrintProtectionMonitor>();
 builder.Services.AddSingleton<SoftwareProtectionMonitor>();
 builder.Services.AddSingleton<WindowsAppControlAuditMonitor>();
 builder.Services.AddSingleton<CliExecutionPolicyManager>();
@@ -109,6 +108,11 @@ builder.Services.AddSingleton<CliSensitiveCommandMonitor>();
 builder.Services.AddSingleton<PipeServer>();
 
 builder.Services.AddHostedService<DlpWorker>();
+
+// Its own dedicated BackgroundService, not ticked from DlpWorker's shared loop - see
+// PrintProtectionMonitor's class comment for why (a print job's cancellable window is too brief to
+// share a poll cadence meant for screen-recording detection).
+builder.Services.AddHostedService<PrintProtectionMonitor>();
 builder.Services.AddHostedService<AuditSyncWorker>();
 builder.Services.AddHostedService<PolicySyncWorker>();
 builder.Services.AddHostedService<DictionaryRuleSyncWorker>();
