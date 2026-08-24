@@ -250,15 +250,29 @@ public sealed class FileProtectionCoordinator(
                 hash = Convert.ToHexString(await SHA256.HashDataAsync(hashStream, cancellationToken)).ToLowerInvariant();
             }
 
+            var info = new FileInfo(fullPath);
+
             // A cached result from a provisional path (BlockAll stub, AI provider unreachable at the
             // time, etc.) never counts as a genuine answer - same convention FileInventoryScanner
             // already applies - so it gets a real attempt now instead of being stuck with a stale
             // placeholder forever (e.g. a transient network blip during a previous encrypt of this
             // exact content).
             var cached = classificationCache.TryGet(hash);
-            if (cached is not null && !FileClassificationReasonCodes.TransientFailureReasonCodes.Contains(cached.ReasonCode)) return;
+            if (cached is not null && !FileClassificationReasonCodes.TransientFailureReasonCodes.Contains(cached.ReasonCode))
+            {
+                // Cache hit (e.g. this exact content was already classified by an earlier encrypt of
+                // this same file, or by FileInventoryScanner) - the enforcement-authoritative cache
+                // already has a genuine answer, so skip re-running the AI classification, but the
+                // status-store write below must NOT be skipped too: confirmed live 2026-08-24 that
+                // putting that write only in the fresh-classification branch below left the DLP
+                // Properties tab stuck on "Unclassified"/"Not Scanned" for any file whose content had
+                // already been classified before (a very common case - re-encrypting the same test
+                // file, or a file the background scanner already reached) since this early return
+                // skipped straight past the status-store update entirely.
+                UpdateDisplayStatus(fullPath, hash, cached.Classification, cached.ReasonCode, cached.ClassifiedAtUtc, info.LastWriteTimeUtc);
+                return;
+            }
 
-            var info = new FileInfo(fullPath);
             var request = new FileClassificationRequest
             {
                 FileName = info.Name,
@@ -279,27 +293,34 @@ public sealed class FileProtectionCoordinator(
             // immediately instead of waiting for FileInventoryScanner's background pass to eventually
             // reach this exact file, which - confirmed live 2026-08-24 on a real profile with a large
             // Downloads folder - can take well over an hour and made the tab look permanently stuck on
-            // "Unclassified" for a file that was, in fact, already correctly protected. Best-effort:
-            // never let a status-display write fail the actual encrypt operation.
-            try
-            {
-                classificationStatusStore.Set(new FileClassificationStatusEntry(
-                    fullPath,
-                    FileClassificationStatuses.UpToDate,
-                    hash,
-                    classifiedAtUtc,
-                    result.ReasonCode,
-                    classifiedAtUtc,
-                    info.LastWriteTimeUtc));
-            }
-            catch (Exception statusException)
-            {
-                logger.LogDebug(statusException, "Could not update the display-only classification status for {Path}.", fullPath);
-            }
+            // "Unclassified" for a file that was, in fact, already correctly protected.
+            UpdateDisplayStatus(fullPath, hash, result.Classification, result.ReasonCode, classifiedAtUtc, info.LastWriteTimeUtc);
         }
         catch (Exception exception)
         {
             logger.LogWarning(exception, "Could not classify {Path} before encryption; it will be treated as unclassified (fail-closed) at decrypt time.", fullPath);
+        }
+    }
+
+    // Best-effort: this only feeds the DLP Properties tab display, so a failure here must never
+    // surface to the caller or affect the actual encrypt operation / enforcement decision.
+    private void UpdateDisplayStatus(
+        string fullPath, string hash, string classification, string reasonCode, DateTimeOffset classifiedAtUtc, DateTimeOffset lastWriteTimeUtc)
+    {
+        try
+        {
+            classificationStatusStore.Set(new FileClassificationStatusEntry(
+                fullPath,
+                FileClassificationStatuses.UpToDate,
+                hash,
+                classifiedAtUtc,
+                reasonCode,
+                DateTimeOffset.UtcNow,
+                lastWriteTimeUtc));
+        }
+        catch (Exception statusException)
+        {
+            logger.LogDebug(statusException, "Could not update the display-only classification status for {Path}.", fullPath);
         }
     }
 }
