@@ -15,6 +15,7 @@ public sealed class FileProtectionCoordinator(
     FileClassificationCache classificationCache,
     FileClassificationService classificationService,
     EncryptedFileHashStore encryptedFileHashStore,
+    FileClassificationStatusStore classificationStatusStore,
     ILogger<FileProtectionCoordinator> logger)
 {
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _fileLocks = new(StringComparer.OrdinalIgnoreCase);
@@ -270,7 +271,31 @@ public sealed class FileProtectionCoordinator(
 
             await using var contentStream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read);
             var result = await classificationService.ClassifyAsync(request, context, cancellationToken, contentStream);
-            classificationCache.Set(new CachedFileClassification(hash, result.Classification, result.ReasonCode, DateTimeOffset.UtcNow));
+            var classifiedAtUtc = DateTimeOffset.UtcNow;
+            classificationCache.Set(new CachedFileClassification(hash, result.Classification, result.ReasonCode, classifiedAtUtc));
+
+            // FileClassificationCache (above) is what PermissionEvaluator actually enforces off - this
+            // status-store write is purely so the DLP Properties tab shows the real classification
+            // immediately instead of waiting for FileInventoryScanner's background pass to eventually
+            // reach this exact file, which - confirmed live 2026-08-24 on a real profile with a large
+            // Downloads folder - can take well over an hour and made the tab look permanently stuck on
+            // "Unclassified" for a file that was, in fact, already correctly protected. Best-effort:
+            // never let a status-display write fail the actual encrypt operation.
+            try
+            {
+                classificationStatusStore.Set(new FileClassificationStatusEntry(
+                    fullPath,
+                    FileClassificationStatuses.UpToDate,
+                    hash,
+                    classifiedAtUtc,
+                    result.ReasonCode,
+                    classifiedAtUtc,
+                    info.LastWriteTimeUtc));
+            }
+            catch (Exception statusException)
+            {
+                logger.LogDebug(statusException, "Could not update the display-only classification status for {Path}.", fullPath);
+            }
         }
         catch (Exception exception)
         {
