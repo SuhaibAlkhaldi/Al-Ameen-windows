@@ -22,6 +22,7 @@ public sealed class FileProtectionCoordinatorClassificationGateTests : IDisposab
     private readonly AgentIdentityProvider _identityProvider;
     private readonly FileClassificationCache _classificationCache;
     private readonly EncryptedFileHashStore _hashStore;
+    private readonly FileClassificationStatusStore _classificationStatusStore;
     private readonly LocalEntityExtractor _entityExtractor;
     private readonly FileProtectionCoordinator _coordinator;
     private readonly ClientContext _context = new()
@@ -45,6 +46,7 @@ public sealed class FileProtectionCoordinatorClassificationGateTests : IDisposab
         _identityProvider = new AgentIdentityProvider(_policyStore, NullLogger<AgentIdentityProvider>.Instance);
         _classificationCache = new FileClassificationCache(_policyStore, NullLogger<FileClassificationCache>.Instance);
         _hashStore = new EncryptedFileHashStore(_policyStore, NullLogger<EncryptedFileHashStore>.Instance);
+        _classificationStatusStore = new FileClassificationStatusStore(_policyStore, NullLogger<FileClassificationStatusStore>.Instance);
 
         var permissionEvaluator = new PermissionEvaluator(_classificationCache);
         var keyProtector = new FileKeyProtector(_policyStore, _identityProvider, dataProtector, backendApiClient: null!);
@@ -78,6 +80,7 @@ public sealed class FileProtectionCoordinatorClassificationGateTests : IDisposab
             _classificationCache,
             classificationService,
             _hashStore,
+            _classificationStatusStore,
             NullLogger<FileProtectionCoordinator>.Instance);
     }
 
