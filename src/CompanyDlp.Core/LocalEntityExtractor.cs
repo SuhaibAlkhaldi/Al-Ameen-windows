@@ -20,10 +20,14 @@ public sealed class LocalEntityExtractor : IDisposable
     private const int MaxWidth = 12;
     private const int MaxWords = 384;
     private const int MaxTextChars = 4_096;
-    // 0.4 (the original Python reference value) missed real entities that scored just under it (e.g.
-    // a bare email address at 0.398) - 0.38 catches those near-misses without introducing false
-    // positives on plain, non-sensitive text (verified against several sanity-check sentences).
-    private const float Threshold = 0.38f;
+    // 0.3 - the actual reference value from model_service/main.py's predict_entities() call
+    // ("threshold=0.3, # lowered confidence threshold to improve recall"). A prior version of this
+    // file used 0.38 based on an incorrect assumption that 0.4 was the reference default; that value
+    // was never actually verified against the real Python source and was silently dropping any entity
+    // scoring 0.30-0.38 that the real backend (and any script importing its ALL_LABELS/threshold
+    // directly, e.g. test_cmodel.py) would catch. Corrected 2026-08-24 after comparing classification
+    // results against a standalone script using the real reference values.
+    private const float Threshold = 0.3f;
 
     private const string EntToken = "<<ENT>>";
     private const string SepToken = "<<SEP>>";
@@ -34,10 +38,20 @@ public sealed class LocalEntityExtractor : IDisposable
 
     // Verbatim from model_service/main.py's EN_LABELS/AR_LABELS/LABEL_MAP - the bilingual zero-shot
     // label set the model was prompted with, and the mapping back to canonical DLP entity types.
+    // Corrected 2026-08-24: a prior version of this list had only 8 EN labels, reworded relative to
+    // the real reference (e.g. "person name" instead of "person") and missing "telephone", "mobile
+    // number", "contact number", and "url" entirely, despite the comment above claiming it was
+    // verbatim - it was never actually diffed against the real model_service/main.py source. GLiNER's
+    // zero-shot recall is highly sensitive to exact label wording/count (see the "+1-555-234-9876"
+    // investigation in AiModel/README.md, where changing the label prompt alone dropped a real
+    // detection's score from 0.60 to 0.30) - the wrong label set silently changes what the model sees
+    // and can miss entities the reference backend would catch. Fixed by copying EN_LABELS/AR_LABELS/
+    // LABEL_MAP from ai_dlp_replica/model_service/main.py directly, character-for-character.
     private static readonly string[] EnLabels =
     [
-        "person name", "phone number", "email address", "passport number",
-        "credit card number", "national ID number", "organization", "location"
+        "person", "phone number", "telephone", "mobile number", "contact number",
+        "email", "passport number", "credit card", "national id", "organization",
+        "location", "url"
     ];
 
     private static readonly string[] ArLabels =
@@ -50,14 +64,22 @@ public sealed class LocalEntityExtractor : IDisposable
 
     private static readonly Dictionary<string, string> LabelMap = new(StringComparer.OrdinalIgnoreCase)
     {
+        ["person"] = "PERSON",
         ["person name"] = "PERSON",
         ["phone number"] = "PHONE",
+        ["telephone"] = "PHONE",
+        ["mobile number"] = "PHONE",
+        ["contact number"] = "PHONE",
+        ["email"] = "EMAIL",
         ["email address"] = "EMAIL",
         ["passport number"] = "PASSPORT",
+        ["credit card"] = "CREDIT_CARD",
         ["credit card number"] = "CREDIT_CARD",
+        ["national id"] = "NATIONAL_ID",
         ["national id number"] = "NATIONAL_ID",
         ["organization"] = "ORGANIZATION",
         ["location"] = "LOCATION",
+        ["url"] = "URL",
         ["اسم شخص"] = "PERSON",
         ["رقم هاتف"] = "PHONE",
         ["بريد إلكتروني"] = "EMAIL",
