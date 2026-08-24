@@ -114,7 +114,26 @@ public sealed class BackendApiClient(
             enrollment,
             JsonDefaults.Options,
             timeout.Token);
-        response.EnsureSuccessStatusCode();
+
+        // Deliberately NOT response.EnsureSuccessStatusCode() - that throws a generic
+        // "Response status code does not indicate success: 400 (Bad Request)" with no way to see
+        // *why* the backend rejected the request (wrong/expired code, tenant mismatch, missing
+        // lookup data, etc.). The backend always returns a bilingual ApiResponse body
+        // (messageEn/messageAr) on failure - see AgentEnrollmentController/AgentEnrollmentService -
+        // so read and surface it instead, same pattern SendJsonAsync already uses for every other
+        // endpoint. Confirmed live (2026-08-24): diagnosing a real enrollment failure took a manual
+        // raw HTTP call from PowerShell because this method was swallowing the actual reason.
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync(timeout.Token);
+            var safeErrorBody = errorBody.Replace('\r', ' ').Replace('\n', ' ').Trim();
+            if (safeErrorBody.Length > 2000) safeErrorBody = safeErrorBody[..2000];
+            throw new HttpRequestException(
+                $"Agent enrollment failed with {(int)response.StatusCode} ({response.ReasonPhrase}). Response: {safeErrorBody}",
+                inner: null,
+                statusCode: response.StatusCode);
+        }
+
         var result = await response.Content.ReadFromJsonAsync<AgentEnrollmentResponse>(JsonDefaults.Options, timeout.Token)
             ?? throw new InvalidOperationException("Backend returned an empty enrollment response.");
         if (string.IsNullOrWhiteSpace(result.AccessToken))
