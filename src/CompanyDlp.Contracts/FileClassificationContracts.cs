@@ -20,11 +20,20 @@ public sealed class FileClassificationPolicy
     // with no cached result yet is treated as ClassificationTiers.VerySecret (fail-closed) until
     // the scanner catches up to it.
     public bool BackgroundScanEnabled { get; set; } = true;
+    // Order matters: FileInventoryScanner.TickAsync walks this list front-to-back and fully
+    // exhausts one folder's entire file tree before moving to the next - a single tick is not
+    // interruptible mid-folder. Desktop is listed first (not Downloads) because it's the folder a
+    // user is most likely actively working in and expects a just-created/just-encrypted file to
+    // classify promptly; confirmed live (2026-08-24) that with Downloads first, a real user's
+    // Downloads folder (tens of thousands of files across many subfolders, entirely normal for a
+    // long-lived profile) blocked the scanner from ever reaching a brand-new Desktop file for well
+    // over an hour, making the DLP Properties tab look permanently broken/stuck on "Unclassified"
+    // for that file even though nothing was actually wrong - it just hadn't been reached yet.
     public List<string> WatchedFolders { get; set; } =
     [
-        "%USERPROFILE%\\Downloads",
         "%USERPROFILE%\\Desktop",
-        "%USERPROFILE%\\Documents"
+        "%USERPROFILE%\\Documents",
+        "%USERPROFILE%\\Downloads"
     ];
     public int ScanIntervalSeconds { get; set; } = 10;
     public bool BackfillCompleted { get; set; }
