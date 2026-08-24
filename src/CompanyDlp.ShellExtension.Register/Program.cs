@@ -21,6 +21,11 @@ namespace CompanyDlp.ShellExtension.Register
     {
         private const string PropertyHandlerClsid = "{803D05F5-7ACD-47BD-B4AB-F89F393C71A6}";
 
+        // DlpPropertySheetHandler's own [Guid(...)] - kept as a literal string (not a reflection
+        // lookup off typeof(DlpPropertySheetHandler)) so the association-key write below stays
+        // correct even if that attribute is ever read differently by future SharpShell versions.
+        private const string PropertySheetHandlerClsid = "{B2E4C7A1-3D5F-4C9E-9A6B-1F8E2D7C4B90}";
+
         [DllImport("propsys.dll", CharSet = CharSet.Unicode, PreserveSig = true)]
         private static extern int PSRegisterPropertySchema(string pszPath);
 
@@ -43,6 +48,25 @@ namespace CompanyDlp.ShellExtension.Register
                 if (args[0] == "/register")
                 {
                     ServerRegistrationManager.InstallServer(handler, registrationType, true);
+
+                    // ServerRegistrationManager.InstallServer registers the CLSID itself (CLSID\{...}
+                    // \InprocServer32 etc. - confirmed live, COM activation of the bare CLSID succeeds)
+                    // but was confirmed live (2026-08-24, via a full registry search across
+                    // HKLM\SOFTWARE\Classes) to NOT write the "*\shellex\PropertySheetHandlers\{CLSID}"
+                    // association key that actually tells Explorer to call this handler when showing a
+                    // file's Properties dialog - despite reporting success. Without that key, Explorer
+                    // has no reason to ever invoke IShellPropSheetExt on this CLSID, so the "DLP" tab
+                    // silently never appears for any file, indefinitely, with no error anywhere. Same
+                    // category of gap as the Classification column below (SharpShell's registration
+                    // manager doesn't cover every registry shape a real shell extension needs) - so
+                    // fixed the same way: hand-write the missing key directly, defensively, right after
+                    // the library's own registration call.
+                    using (var propertySheetHandlersKey = Registry.ClassesRoot.CreateSubKey(
+                        $@"*\shellex\PropertySheetHandlers\{PropertySheetHandlerClsid}"))
+                    {
+                        propertySheetHandlersKey?.SetValue(null, "CompanyDlp Classification");
+                    }
+
                     Console.WriteLine("CompanyDlp.ShellExtension (DLP Properties tab) registered.");
 
                     // The Explorer "Classification" column is a pure UI convenience read via the
@@ -72,6 +96,14 @@ namespace CompanyDlp.ShellExtension.Register
                 else
                 {
                     ServerRegistrationManager.UninstallServer(handler, registrationType);
+
+                    try
+                    {
+                        Registry.ClassesRoot.DeleteSubKeyTree(
+                            $@"*\shellex\PropertySheetHandlers\{PropertySheetHandlerClsid}", throwOnMissingSubKey: false);
+                    }
+                    catch { }
+
                     Console.WriteLine("CompanyDlp.ShellExtension (DLP Properties tab) unregistered.");
 
                     UnregisterClassificationColumn();
