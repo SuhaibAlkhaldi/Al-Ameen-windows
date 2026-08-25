@@ -1,3 +1,4 @@
+using System.Text.Json;
 using CompanyDlp.Contracts;
 using CompanyDlp.Core;
 using CompanyDlp.Service;
@@ -146,19 +147,39 @@ if (enrollmentMode)
     if (policy.Backend.TenantId == Guid.Empty)
         throw new InvalidOperationException("A non-empty backend tenantId is required before agent enrollment.");
 
-    var result = await host.Services.GetRequiredService<BackendApiClient>().EnrollAsync(
-        new AgentEnrollmentRequest
-        {
-            TenantId = identity.TenantId,
-            DeviceId = identity.DeviceId,
-            MachineName = identity.MachineName,
-            AgentVersion = identity.AgentVersion,
-            EnrollmentCode = enrollmentCode
-        },
-        CancellationToken.None);
+    // Wrapped in try/catch instead of letting a failed enrollment bubble up as an unhandled
+    // exception - confirmed live 2026-08-25: a second device's install hit "Cannot start service
+    // CompanyDlp" with no visible reason, because (a) this block previously let .NET's default
+    // unhandled-exception handler print a full stack trace that scrolled out of the installer
+    // console before anyone could read it, and (b) deploy-agent-portable.ps1 never checked whether
+    // --enroll actually succeeded before moving on to Start-Service, so the *real* failure (a bad or
+    // already-used enrollment code) was masked by a second, generic, unrelated-looking SCM error.
+    // BackendApiClient.EnrollAsync already extracts the backend's bilingual messageEn/messageAr into
+    // the exception text for exactly this reason - ExtractEnrollmentFailureReason below pulls just
+    // that one line back out so the operator sees e.g. "Enrollment code usage limit has been
+    // reached." instead of a wall of CLR stack frames.
+    try
+    {
+        var result = await host.Services.GetRequiredService<BackendApiClient>().EnrollAsync(
+            new AgentEnrollmentRequest
+            {
+                TenantId = identity.TenantId,
+                DeviceId = identity.DeviceId,
+                MachineName = identity.MachineName,
+                AgentVersion = identity.AgentVersion,
+                EnrollmentCode = enrollmentCode
+            },
+            CancellationToken.None);
 
-    Console.WriteLine($"Al-Ameen device {identity.DeviceId:D} enrolled. Credential expires at {result.ExpiresAtUtc:O}.");
-    return;
+        Console.WriteLine($"Al-Ameen device {identity.DeviceId:D} enrolled. Credential expires at {result.ExpiresAtUtc:O}.");
+        return;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine("Al-Ameen enrollment failed: " + ExtractEnrollmentFailureReason(ex));
+        Environment.Exit(2);
+        return;
+    }
 }
 
 await host.RunAsync();
@@ -184,4 +205,35 @@ static void ValidateProductionReadiness(
         + Environment.NewLine
         + string.Join(Environment.NewLine, failures.Select(item => "- " + item));
     throw new InvalidOperationException(message);
+}
+
+// BackendApiClient.EnrollAsync formats failures as
+// "Agent enrollment failed with 400 (Bad Request). Response: {"success":false,"messageEn":"...",...}"
+// - the JSON after "Response: " is the backend's raw ApiResponse body. Pull just messageEn back out
+// so the operator sees one clean sentence ("Invalid or expired enrollment code." /
+// "Enrollment code usage limit has been reached.") instead of the whole wrapped exception text. Any
+// exception shape this doesn't recognize (network failure, timeout, malformed body from a proxy)
+// falls back to ex.Message as-is rather than hiding it.
+static string ExtractEnrollmentFailureReason(Exception ex)
+{
+    const string marker = "Response: ";
+    var index = ex.Message.IndexOf(marker, StringComparison.Ordinal);
+    if (index < 0) return ex.Message;
+
+    var json = ex.Message[(index + marker.Length)..].Trim();
+    try
+    {
+        using var document = JsonDocument.Parse(json);
+        if (document.RootElement.TryGetProperty("messageEn", out var messageEn)
+            && messageEn.GetString() is { Length: > 0 } text)
+        {
+            return text;
+        }
+    }
+    catch (JsonException)
+    {
+        // Not parseable JSON - fall through to the raw exception message below.
+    }
+
+    return ex.Message;
 }

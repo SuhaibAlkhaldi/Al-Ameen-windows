@@ -485,6 +485,15 @@ Set-InstallProgress "Enrolling this device..."
 $env:COMPANY_DLP_ENROLLMENT_CODE = $enrollmentCode
 try {
     & $serviceExe --enroll
+    # Confirmed live 2026-08-25: before this check existed, a failed --enroll (bad/expired code,
+    # usage-limit reached, network error) was silently ignored and the script fell straight through
+    # to Start-Service below, which then failed with a generic, unrelated-looking SCM error
+    # ("Cannot start service CompanyDlp on computer '.'.") - hiding the real, already-printed reason.
+    # $serviceExe now prints a clean one-line reason to stderr and exits 2 on enrollment failure (see
+    # Program.cs ExtractEnrollmentFailureReason) - stop here immediately instead of masking it.
+    if ($LASTEXITCODE -ne 0) {
+        throw "Device enrollment failed (exit code $LASTEXITCODE) - see the 'Al-Ameen enrollment failed: ...' line above for the reason. The service was not started; fix the enrollment code and re-run this script."
+    }
 } finally {
     Remove-Item Env:COMPANY_DLP_ENROLLMENT_CODE -ErrorAction SilentlyContinue
     $enrollmentCode = $null
