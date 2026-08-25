@@ -51,6 +51,31 @@ here - this section exists so a future re-export doesn't need to rediscover any 
   checksum (`StructuredEntityValidator.ReclassifyDigitEntityType`) - Luhn-valid digit sequences of
   plausible card length stay `CREDIT_CARD`, everything else becomes `NATIONAL_ID`.
 
+## 2026-08-25 update: gliner_model.onnx replaced with a new delivery from the AI team
+
+The AI team sent a second export attempt (`Copy of gliner_model.onnx` / `Copy of spm.model` in
+Downloads). Verified before swapping in (via `onnxruntime.InferenceSession`, not assumed):
+
+- `spm.model` is byte-for-byte identical (sha256 `13c8d666d62a7bc4ac8f040aab68e942c861f93303156cc28f5c7e885d86d6e3`)
+  to the one already here - no change, left in place.
+- `gliner_model.onnx` is a genuinely different file (sha256 `2030df6c45651ecbcc8034d5a1b3df8bc3d5775f218a27152c3aeb2a10337ade`,
+  vs the previous `db955a08458f71a57bb03c0a88cb4e9b81bb8185a12efc031784b573661faf10`). The 6 required
+  inputs (`input_ids`, `attention_mask`, `words_mask`, `span_idx`, `span_mask`, `text_lengths`) match
+  the spec exactly in name and dtype, and a synthetic forward pass produced a correctly-shaped
+  `[1, num_words, 12, num_classes]` `logits` tensor with no NaNs.
+- **Deviation from spec, not blocking but worth flagging back to the AI team**: this export was not
+  trimmed to the single `logits` output we asked for - it still has 5 graph outputs (`logits`,
+  `prompts_embedding`, and three unnamed intermediate cast/shape tensors), i.e. the export wrapper
+  returned its full internal tuple instead of just `logits`. ONNX Runtime happens to list `logits`
+  first, so `results.First()` would have worked by luck, but `LocalEntityExtractor.cs` was hardened
+  the same day to call `_session.Run(inputs, new[] { "logits" })` and select by name instead, so this
+  (or any future export with the same issue) can't silently break or waste compute on the extra
+  outputs regardless of graph output order.
+- The previous file was backed up to `../AiModel-backup-2026-08-23-preSwap/gliner_model.onnx`
+  (sibling of this folder, deliberately outside `AiModel/` so the csproj's
+  `<None Include="AiModel\**" .../>` rule doesn't bundle it into publish output) in case this new
+  export needs to be rolled back after real-world testing.
+
 ## Backup (outside git)
 
 A copy of both files as placed here is saved at:

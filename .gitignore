@@ -55,5 +55,13 @@ Thumbs.db
 src/CompanyDlp.Service/AiModel/*.onnx
 src/CompanyDlp.Service/AiModel/*.model
 
+# Ad-hoc local backup/scratch copies of the AI model files (e.g. before swapping in a new delivery
+# from the AI team) get created as siblings of AiModel/ - deliberately outside that directory so the
+# .csproj's <None Include="AiModel\**" .../> publish rule never bundles a 1GB+ backup into build
+# output. Sibling-of-AiModel means the two rules above (which only match inside AiModel/ itself)
+# don't cover them, so they need their own explicit ignore rule here.
+src/CompanyDlp.Service/AiModel-backup-*/
+src/CompanyDlp.Service/AiModel-incoming*/
+
 # Local-only Tesseract OCR language data (deployed separately, never committed)
 src/CompanyDlp.Service/TessData/

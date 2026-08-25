@@ -196,8 +196,16 @@ public sealed class LocalEntityExtractor : IDisposable
             NamedOnnxValue.CreateFromTensor("text_lengths", textLengthsTensor)
         };
 
-        using var results = _session.Run(inputs);
-        var logits = results.First().AsTensor<float>();
+        // Explicitly requesting only "logits" by name - not results.First() - because not every ONNX
+        // export we've been handed trims the graph down to a single output the way the spec we sent
+        // asks for. A 2026-08-24 delivery still had 5 outputs (logits, prompts_embedding, and three
+        // unnamed intermediate cast/shape tensors) left over from an untrimmed export; ONNX Runtime
+        // happened to still list "logits" first in that specific file, so .First() would have worked
+        // by coincidence, but that ordering isn't a documented guarantee and a future export could
+        // easily list it differently or add new debug outputs. Requesting the output by name costs
+        // nothing and removes the dependency on export hygiene entirely.
+        using var results = _session.Run(inputs, new[] { "logits" });
+        var logits = results.First(r => r.Name == "logits").AsTensor<float>();
 
         var spans = DecodeSpans(logits, numWords, numClasses);
 
