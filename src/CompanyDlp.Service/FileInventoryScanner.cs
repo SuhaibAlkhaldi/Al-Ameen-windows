@@ -127,6 +127,27 @@ public sealed class FileInventoryScanner(
         // new discovery, and must keep showing "Failed" rather than flashing back to "Pending" on
         // every retry attempt.
         var existingStatus = statusStore.TryGet(normalized);
+
+        // Cheap, I/O-free rejection for extensions DocumentTextExtractor could never read anyway
+        // (source code, binaries, git internals, .dlpenc ciphertext, etc.) - checked BEFORE the
+        // SHA256 read and the second FileStream open further down. Confirmed live 2026-08-26: a
+        // Desktop containing a large dev repo (node_modules/.git/bin/obj/build output) put roughly
+        // 950,000 files under a single watched folder; every one of them was previously fully read
+        // and hashed before LocalAiFileClassificationProvider reached this exact same rejection, so
+        // the scanner spent an enormous amount of disk I/O on files that could never classify as
+        // anything but Unsupported - starving the user's own documents sitting in that same folder
+        // of ever being reached. This reaches the identical end state (Unsupported /
+        // AiFileTypeRejected) the deeper check already produced, just without the wasted I/O.
+        if (!DocumentTextExtractor.IsSupported(info.Extension))
+        {
+            _lastSeenWriteTimes[path] = info.LastWriteTimeUtc;
+            statusStore.Set(new FileClassificationStatusEntry(
+                normalized, FileClassificationStatuses.Unsupported,
+                existingStatus?.LastClassifiedHash, existingStatus?.LastScannedAtUtc,
+                FileClassificationReasonCodes.AiFileTypeRejected, DateTimeOffset.UtcNow));
+            return;
+        }
+
         if (existingStatus is null)
         {
             // A path never seen before this process's lifetime - mark it queued immediately so a
@@ -315,14 +336,30 @@ public sealed class FileInventoryScanner(
         }
     }
 
-    // node_modules folders hold thousands of library files that are never user content and don't
-    // need classification - scanning them anyway means the very first tick after a fresh npm
-    // install can spend hours making real AI classification calls for every one of those files
-    // before it ever gets back around to re-checking an actual user document.
-    private static bool IsInsideNodeModules(string path)
+    // These folder names hold library/tooling/build-output files that are never user content and
+    // don't need classification. Originally this only excluded node_modules; extended 2026-08-26
+    // after a Desktop containing a full dev repo (source control internals, multiple bin/obj build
+    // outputs, a Visual Studio cache folder) put roughly 950,000 files under one watched folder,
+    // burying the user's own documents behind an enormous, permanently-growing pile of files that
+    // could never be anything but Unsupported. The extension pre-check above (see
+    // DocumentTextExtractor.IsSupported) already makes each individual rejection cheap, but skipping
+    // these directories entirely also avoids the per-file FileInfo/stat cost and keeps a single tick
+    // from taking hours just to walk the tree.
+    private static readonly HashSet<string> ExcludedDirectoryNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "node_modules",
+        ".git",
+        "bin",
+        "obj",
+        ".vs",
+        "dist",
+        "build"
+    };
+
+    private static bool IsInsideExcludedDirectory(string path)
     {
         return path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-            .Any(segment => segment.Equals("node_modules", StringComparison.OrdinalIgnoreCase));
+            .Any(segment => ExcludedDirectoryNames.Contains(segment));
     }
 
     private IEnumerable<string> EnumerateFilesSafely(string root)
@@ -355,7 +392,7 @@ public sealed class FileInventoryScanner(
                     yield break;
                 }
 
-                if (!IsInsideNodeModules(current)) yield return current;
+                if (!IsInsideExcludedDirectory(current)) yield return current;
             }
         }
     }
