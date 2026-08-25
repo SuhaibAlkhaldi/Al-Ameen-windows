@@ -259,7 +259,7 @@ public sealed class PipeServer(
             {
                 var input = request.Data?.Deserialize<FileClassificationStatusRequest>(JsonDefaults.Options)
                     ?? new FileClassificationStatusRequest();
-                return DlpResponse.Ok(data: fileClassificationStatusResolver.Resolve(input.FilePath));
+                return DlpResponse.Ok(data: await fileClassificationStatusResolver.ResolveAsync(input.FilePath, cancellationToken));
             }
             case DlpMessageTypes.Audit:
             {

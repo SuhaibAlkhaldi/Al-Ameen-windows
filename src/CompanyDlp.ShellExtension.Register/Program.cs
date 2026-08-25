@@ -188,7 +188,16 @@ namespace CompanyDlp.ShellExtension.Register
         // because CompanyDlp.Core targets net8.0-windows and this project targets net48 (see
         // CompanyDlp.ShellExtension.csproj's header comment on why), so CompanyDlp.Core isn't
         // available to reference here. Keep in sync by hand if that list ever changes.
-        private static readonly string[] ClassifiedExtensions = { ".txt", ".pdf", ".docx", ".jpg", ".jpeg", ".png" };
+        //
+        // ".dlpenc" is deliberately added on top of that mirrored list (it will never appear in
+        // DocumentTextExtractor.SupportedExtensions, since that list is about extracting text from a
+        // *readable* file for content classification, and a .dlpenc file's body is opaque ciphertext).
+        // Without this, Explorer never calls DlpClassificationPropertyHandler for encrypted files at
+        // all, so the "DLP Classification" column - and the whole point of being able to see a file's
+        // sensitivity tier before attempting to decrypt it - silently stayed blank for every .dlpenc
+        // file, confirmed live 2026-08-25. FileClassificationStatusResolver.ResolveAsync has the
+        // matching .dlpenc-aware branch that makes a value actually available once Explorer asks for it.
+        private static readonly string[] ClassifiedExtensions = { ".txt", ".pdf", ".docx", ".jpg", ".jpeg", ".png", ".dlpenc" };
 
         private static void UnregisterClassificationColumn()
         {
