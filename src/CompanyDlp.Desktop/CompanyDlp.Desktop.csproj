@@ -4,11 +4,24 @@
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
+    <!-- Without this, CompanyDlp.Desktop.exe (and every shortcut/taskbar/Alt-Tab entry pointing at
+         it) shows the generic default .NET icon - confirmed live 2026-08-25, this project never had
+         any icon at all, not even a placeholder. Reusing the real Al-Ameen brand mark rather than
+         inventing a new one, sourced from the same asset the web frontend already ships
+         (al-ameen\src\assets\logo\ameen-icon-512.png), converted to a proper multi-resolution .ico
+         (256/128/64/48/32/16 px) so it stays crisp from the title bar up through high-DPI Alt-Tab. -->
+    <ApplicationIcon>Assets\ameen-agent.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="System.Management" Version="8.0.0" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\CompanyDlp.Contracts\CompanyDlp.Contracts.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Separate from ApplicationIcon above - that only sets the .exe FILE's icon (Explorer,
+         shortcuts, taskbar pin). WPF windows don't automatically inherit it for the title bar/Alt-Tab
+         thumbnail, so MainWindow.xaml references this same file directly via Window.Icon. -->
+    <Resource Include="Assets\ameen-agent.ico" />
   </ItemGroup>
 </Project>
