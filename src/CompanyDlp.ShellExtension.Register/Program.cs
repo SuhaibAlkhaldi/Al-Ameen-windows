@@ -155,11 +155,32 @@ namespace CompanyDlp.ShellExtension.Register
             // docs state plainly that S_OK is the only value indicating full success here, so hr != 0
             // (not the usual FAILED(hr) / hr < 0 convention) is the correct check for this API
             // specifically.
+            //
+            // Deliberately does NOT throw/return here anymore on a nonzero hr - confirmed live
+            // 2026-08-26: this used to `throw` immediately below, which (given the caller only wraps
+            // the WHOLE of RegisterClassificationColumn in one try/catch) skipped
+            // RegisterPropertyHandlerClsid() and the per-extension PropertyHandler association loop
+            // below ENTIRELY on every machine still hitting the still-unresolved 0x000401A0 issue - a
+            // full registry search confirmed neither the CLSID nor a single SystemFileAssociations
+            // PropertyHandler key existed at all on such a machine, despite the "DLP Classification"
+            // column having genuinely appeared and worked in Explorer's column picker on that same
+            // machine at an earlier point in time (from a register attempt that happened not to hit
+            // the failure). The schema registration and the property-handler COM registration are two
+            // independent pieces of Windows infrastructure - a truncated/failed schema registration
+            // does not mean the value-computing COM handler can't still be registered and work
+            // correctly for whichever properties analysis (if any) is queried via IPropertyStore, so
+            // one failing must not block the other. Logged and swallowed instead of thrown; the
+            // caller's own try/catch around RegisterClassificationColumn() remains as a second safety
+            // net for any other exception this method might still throw (e.g. the FileNotFoundException
+            // a few lines up).
             var hr = PSRegisterPropertySchema(propDescPath);
             if (hr != 0)
             {
-                throw new InvalidOperationException(
-                    $"PSRegisterPropertySchema failed for {propDescPath} (HRESULT 0x{hr:X8}).");
+                Console.Error.WriteLine(
+                    $"WARNING: PSRegisterPropertySchema failed for {propDescPath} (HRESULT 0x{hr:X8}) - " +
+                    "the column may not be addable via Explorer's column picker on this machine, but " +
+                    "continuing to register the property handler itself so classification values are " +
+                    "still computed correctly for any property lookup that does reach it.");
             }
 
             RegisterPropertyHandlerClsid();
