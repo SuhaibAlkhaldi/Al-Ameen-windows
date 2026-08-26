@@ -442,22 +442,30 @@ public static class ContentWatermarker
                     writer.Write(BuildDocxWatermarkHeaderXml(lines, color, imageRelId, pageWidthEmu, pageHeightEmu));
                 }
 
-                if (existingHeaderPart is null)
+                // Unconditional, not just "on first creation": confirmed live 2026-08-26 on a real
+                // resume template that had <w:titlePg/> set ("Different First Page") - Word shows
+                // NOTHING on page 1 unless a "first" header reference is explicitly present, even
+                // though a "default" one is set and correctly used for every other page. Our
+                // watermark was silently absent from page 1 of exactly that kind of document.
+                // Setting BOTH references to the same header part is harmless when titlePg is off
+                // (Word simply never looks at the unused "first" reference in that case), and this
+                // now runs on every call (not only when the header part is brand new) so a file
+                // that was already watermarked before this fix existed gets corrected on its next
+                // reclassification pass too, not just on first-ever watermarking.
+                var relationshipId = mainPart.GetIdOfPart(headerPart);
+                var sectionProperties = body.Elements<SectionProperties>().ToList();
+                if (sectionProperties.Count == 0)
                 {
-                    var relationshipId = mainPart.GetIdOfPart(headerPart);
-                    var sectionProperties = body.Elements<SectionProperties>().ToList();
-                    if (sectionProperties.Count == 0)
-                    {
-                        var newSectionProperties = new SectionProperties();
-                        body.Append(newSectionProperties);
-                        sectionProperties.Add(newSectionProperties);
-                    }
+                    var newSectionProperties = new SectionProperties();
+                    body.Append(newSectionProperties);
+                    sectionProperties.Add(newSectionProperties);
+                }
 
-                    foreach (var sectPr in sectionProperties)
-                    {
-                        sectPr.RemoveAllChildren<HeaderReference>();
-                        sectPr.PrependChild(new HeaderReference { Type = HeaderFooterValues.Default, Id = relationshipId });
-                    }
+                foreach (var sectPr in sectionProperties)
+                {
+                    sectPr.RemoveAllChildren<HeaderReference>();
+                    sectPr.PrependChild(new HeaderReference { Type = HeaderFooterValues.First, Id = relationshipId });
+                    sectPr.PrependChild(new HeaderReference { Type = HeaderFooterValues.Default, Id = relationshipId });
                 }
 
                 mainPart.Document!.Save();
