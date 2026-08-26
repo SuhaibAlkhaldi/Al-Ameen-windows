@@ -452,8 +452,19 @@ public static class ContentWatermarker
                 // now runs on every call (not only when the header part is brand new) so a file
                 // that was already watermarked before this fix existed gets corrected on its next
                 // reclassification pass too, not just on first-ever watermarking.
+                //
+                // Descendants, not Elements: a document with a section break IN THE MIDDLE of the
+                // body (very common in real templates - confirmed live on a second real resume,
+                // which had two sections) stores that section's SectionProperties inside the last
+                // paragraph BEFORE the break's own ParagraphProperties, not as a direct child of
+                // Body - only the final section's SectionProperties is a direct child. Elements<T>()
+                // only sees direct children, so it silently found and updated just the LAST
+                // section, leaving every page that belonged to the earlier section (everything
+                // before the break) with no headerReference at all and therefore no watermark -
+                // exactly the "not all pages" symptom reported live. Descendants<T>() walks the
+                // whole body and finds every section, wherever its SectionProperties actually lives.
                 var relationshipId = mainPart.GetIdOfPart(headerPart);
-                var sectionProperties = body.Elements<SectionProperties>().ToList();
+                var sectionProperties = body.Descendants<SectionProperties>().ToList();
                 if (sectionProperties.Count == 0)
                 {
                     var newSectionProperties = new SectionProperties();
@@ -489,9 +500,11 @@ public static class ContentWatermarker
     // section properties yet) so the embedded tile picture is sized to genuinely cover the real
     // page - a mismatched size would either leave gaps or spill past the edges. Twips (the
     // WordprocessingML unit, 1/20 pt) convert to EMU (DrawingML's unit, 12700 per pt) via *635.
+    // Descendants, not Elements: see the comment on the header-reference loop in WatermarkDocx for
+    // why a document can have SectionProperties that are NOT direct children of Body.
     private static (long WidthEmu, long HeightEmu) GetDocxPageSizeEmu(Body body)
     {
-        var pageSize = body.Elements<SectionProperties>().FirstOrDefault()?.GetFirstChild<PageSize>();
+        var pageSize = body.Descendants<SectionProperties>().FirstOrDefault()?.GetFirstChild<PageSize>();
         var widthTwips = pageSize?.Width?.Value ?? 12240U;  // US Letter default, 8.5in
         var heightTwips = pageSize?.Height?.Value ?? 15840U; // 11in
         return ((long)widthTwips * 635, (long)heightTwips * 635);
