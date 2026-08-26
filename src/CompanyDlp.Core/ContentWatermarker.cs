@@ -345,8 +345,8 @@ public static class ContentWatermarker
                     cachedHeight = page.Height.Point;
                 }
 
-                var tileBytes = cachedTilePng;
-                using var tileImage = XImage.FromStream(() => new MemoryStream(tileBytes));
+                using var tileImageStream = new MemoryStream(cachedTilePng);
+                using var tileImage = XImage.FromStream(tileImageStream);
                 gfx.DrawImage(tileImage, 0, 0, page.Width.Point, page.Height.Point);
 
                 const double margin = 18;
