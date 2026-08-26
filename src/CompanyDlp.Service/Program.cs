@@ -73,7 +73,8 @@ builder.Services.AddSingleton(provider =>
     var tessDataPath = provider.GetRequiredService<IConfiguration>()["LocalAi:TessDataPath"]
         ?? Path.Combine(baseDirectory, "TessData");
     var ocrLanguages = provider.GetRequiredService<IConfiguration>()["LocalAi:OcrLanguages"] ?? "eng+ara";
-    return new ImageOcrExtractor(tessDataPath, ocrLanguages);
+    var logger = provider.GetRequiredService<ILogger<ImageOcrExtractor>>();
+    return new ImageOcrExtractor(tessDataPath, ocrLanguages, logger);
 });
 builder.Services.AddSingleton<LocalAiFileClassificationProvider>();
 builder.Services.AddSingleton<FileClassificationService>();
