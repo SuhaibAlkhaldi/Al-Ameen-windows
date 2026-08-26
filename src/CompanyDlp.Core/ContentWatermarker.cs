@@ -27,19 +27,28 @@ namespace CompanyDlp.Core;
 // Two-layer visual design, unified 2026-08-26 to share one text/layout system with the on-screen
 // watermark (CompanyDlp.Desktop\Watermark\WatermarkWindow.xaml.cs), per explicit request that the
 // file watermark "look professional" and match what's already on the employee's screen:
-//   1. A small, clearly-legible, non-rotated corner info block (Classification/Device/Last
-//      Scanned), in the true tier color - the "what is this file, at a glance" indicator.
+//   1. A small, clearly-legible, non-rotated corner info block (Classification/Device), in the
+//      true tier color - the "what is this file, at a glance" indicator. Still plain text in every
+//      format (a Word header paragraph, a PDF DrawString call, a slide/sheet shape) since it never
+//      needs to rotate and plain text stays crisp/selectable/searchable.
 //   2. A tiled, repeating background layer covering the whole page/slide/sheet/image, built from
 //      the SAME WatermarkPolicy (opacity/fontSize/spacing/prefix/include-flags) and the same
-//      device-user-time text shape as the live screen overlay, just tinted with the tier color
-//      instead of WatermarkWindow's neutral dark - so a stamped file and a live screen capture of
-//      that same file read as "the same watermark system", not two unrelated designs.
-// The two layers are deliberately redundant, not alternatives: removing the watermark from a file
-// means finding and deleting two separate things scattered across the whole page, not one block.
+//      device-user-time text shape as the live screen overlay, tinted with the tier color.
 //
-// Every per-format method writes to a temp file first, then File.Move(overwrite) - same
-// write-safety convention used throughout this codebase (PolicyStore, FileClassificationCache,
-// etc.) - so a crash mid-write can never leave a half-written file in the original's place.
+// Revised again same day: the tile layer is now rendered ONCE as a single transparent PNG (see
+// BuildTileLayerPng) and embedded as a plain, non-rotated floating PICTURE in every format that
+// isn't already raster (PDF/DOCX/PPTX/XLSX) - the rotation is baked into the picture's pixels
+// instead of relying on each format's own "rotated shape" feature. This replaced two earlier,
+// separate vector approaches (PdfSharp's own transform stack for PDF; a DrawingML
+// wordprocessingShape/VML shape for DOCX) after live testing on real user-provided files showed
+// both were unreliable: the PDF version's tile grid rendered as a small off-center clustered block
+// instead of an even full-page pattern (PdfSharp's default transform composition order differs
+// from System.Drawing's), and the DOCX version's rotation did not render AT ALL in at least one
+// major viewer (LibreOffice) despite spec-valid markup, in two different shape techniques tried.
+// A plain embedded picture has neither failure mode - "floating picture behind the text" is a
+// basic, universally-supported feature in every one of these formats, so there is no per-viewer
+// rendering risk left, and every format now produces the literal same pixels for this layer,
+// which is also what makes them "match each other" and match the screen watermark, as requested.
 public static class ContentWatermarker
 {
     public static readonly HashSet<string> SupportedExtensions = new(StringComparer.OrdinalIgnoreCase)
@@ -79,18 +88,9 @@ public static class ContentWatermarker
         [ClassificationTiers.VerySecret] = (255, 0, 0),    // red      #FF0000
     };
 
-    // Pre-blends a tier color toward white by the given opacity (0=white, 1=full tier color) -
-    // used where the target format has no real alpha-compositing support for text (see
-    // BuildDocxTileWatermarkParagraph) and a light tint has to stand in for transparency.
-    private static (byte R, byte G, byte B) BlendTowardWhite((byte R, byte G, byte B) color, double opacity) => (
-        (byte)Math.Round(255 * (1 - opacity) + color.R * opacity),
-        (byte)Math.Round(255 * (1 - opacity) + color.G * opacity),
-        (byte)Math.Round(255 * (1 - opacity) + color.B * opacity));
-
-    // Degrees counter-clockwise, matching PdfSharp/System.Drawing/OpenXML's shared convention of
-    // "positive = counter-clockwise" for this style of watermark. Matches WatermarkWindow's -18°
-    // on-screen tilt (same magnitude; the two rendering stacks don't share a rotation-sign
-    // convention, so this is "visually the same tilt", not a bit-for-bit-identical transform).
+    // Degrees counter-clockwise, matching WatermarkWindow's -18° on-screen tilt (same magnitude;
+    // the two rendering stacks don't share a rotation-sign convention bit-for-bit, so this is
+    // "visually the same tilt", not a bit-for-bit-identical transform).
     private const double RotationDegrees = 18;
 
     // Never throws - a watermarking failure for one file must never take down the background
@@ -210,6 +210,63 @@ public static class ContentWatermarker
         HorizontalSpacing: Math.Max(420, policy.HorizontalSpacing),
         VerticalSpacing: Math.Max(155, policy.VerticalSpacing));
 
+    // === Shared tile-layer rendering - the one implementation every format's background pattern
+    // ultimately goes through (directly for images, via a wrapped PNG for PDF/DOCX/PPTX/XLSX - see
+    // BuildTileLayerPng). A plain staggered grid in UNROTATED canvas coordinates spanning the full
+    // width/height (with one spacing unit of overscan on every edge so a tile centered near a
+    // corner isn't clipped), with only each individual tile's TEXT rotated in place around its own
+    // anchor point. This is also what the on-screen watermark does (WatermarkWindow.RenderWatermarks
+    // positions a staggered grid of elements, each with its own RotateTransform) - rotating each
+    // tile individually, rather than rotating the whole sampling grid as a first attempt at this did
+    // for PDF, is what guarantees the pattern trivially reaches every corner of a plain rectangle
+    // regardless of the rotation angle chosen.
+    private static void DrawTileLayer(Graphics graphics, double widthPixels, double heightPixels, double pixelsPerPoint, string tileText, (byte R, byte G, byte B) color, TileVisuals visuals)
+    {
+        using var font = new System.Drawing.Font(FontFamily, (float)(visuals.FontSize * pixelsPerPoint), System.Drawing.FontStyle.Bold);
+        using var brush = new SolidBrush(System.Drawing.Color.FromArgb(visuals.Alpha, color.R, color.G, color.B));
+        var horizontalSpacing = (float)(visuals.HorizontalSpacing * pixelsPerPoint);
+        var verticalSpacing = (float)(visuals.VerticalSpacing * pixelsPerPoint);
+
+        var row = 0;
+        for (var y = -verticalSpacing; y < heightPixels + verticalSpacing; y += verticalSpacing, row++)
+        {
+            var rowOffset = row % 2 == 0 ? 0 : horizontalSpacing / 2;
+            for (var x = -horizontalSpacing + rowOffset; x < widthPixels + horizontalSpacing; x += horizontalSpacing)
+            {
+                var state = graphics.Save();
+                graphics.TranslateTransform(x, (float)y);
+                graphics.RotateTransform((float)-RotationDegrees);
+                graphics.DrawString(tileText, font, brush, 0, 0);
+                graphics.Restore(state);
+            }
+        }
+    }
+
+    // Renders the tile layer onto a fresh transparent bitmap sized from a physical "points"
+    // dimension (matching PDF/DOCX/PPTX page-or-slide units, where 1pt = 1/72in) - pixelsPerPoint
+    // trades memory/file size for sharper text; 2.0 (the default used by every page-shaped format)
+    // is comfortably sharp for a light background layer without producing an oversized embedded
+    // image.
+    private static Bitmap BuildTileLayerBitmap(double widthPoints, double heightPoints, string tileText, (byte R, byte G, byte B) color, TileVisuals visuals, double pixelsPerPoint)
+    {
+        var width = Math.Max(1, (int)Math.Round(widthPoints * pixelsPerPoint));
+        var height = Math.Max(1, (int)Math.Round(heightPoints * pixelsPerPoint));
+        var bitmap = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+        using var graphics = Graphics.FromImage(bitmap);
+        graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
+        DrawTileLayer(graphics, width, height, pixelsPerPoint, tileText, color, visuals);
+        return bitmap;
+    }
+
+    private static byte[] BuildTileLayerPng(double widthPoints, double heightPoints, string tileText, (byte R, byte G, byte B) color, TileVisuals visuals, double pixelsPerPoint = 2.0)
+    {
+        using var bitmap = BuildTileLayerBitmap(widthPoints, heightPoints, tileText, color, visuals, pixelsPerPoint);
+        using var stream = new MemoryStream();
+        bitmap.Save(stream, ImageFormat.Png);
+        return stream.ToArray();
+    }
+
     // === TXT: a plain text block at the top of the file - the only option for a format with no
     // visual/rendering concept at all (there is no "corner" in plain text, and no way to draw a
     // tiled background either - the single block below is TXT's entire watermark, both layers'
@@ -243,20 +300,20 @@ public static class ContentWatermarker
     }
 
     // === PDF: two lines in the page's bottom-right corner via PdfSharp, non-rotated, in the true
-    // tier color, drawn directly over the page with NO backing panel. Deliberately has no opaque
-    // (or translucent) background: an earlier version painted a solid white panel behind the text
-    // first, which reliably hid whatever original page content happened to sit in that corner
-    // (confirmed on a real file where the last few words of body text landed under the panel and
-    // became unreadable). The user ruled out both keeping an opaque cover and enlarging the page to
-    // make room, so original content must stay fully visible - meaning the tradeoff below is
-    // intentional and accepted, not an oversight.
-    // Trade-off: PdfSharp has no way to locate and erase a specific string already baked into a
-    // page's content stream, so on RECLASSIFICATION (tier change on an already-watermarked PDF) the
-    // old line's text is not erased - the new line is drawn on top of it, and both remain
-    // visible/overlap. This only affects PDFs that get re-watermarked after their tier already
-    // changed once; a PDF watermarked for the first time only ever gets one clean pass. PdfPig
-    // (this project's other PDF dependency, used by DocumentTextExtractor) is read-only and cannot
-    // write, hence PdfSharp here.
+    // tier color, drawn directly over the page with NO backing panel, plus the shared tile-layer
+    // PNG (see BuildTileLayerPng) stretched full-bleed underneath it. Deliberately has no opaque
+    // (or translucent) background behind the corner text: an earlier version painted a solid white
+    // panel behind the text first, which reliably hid whatever original page content happened to
+    // sit in that corner (confirmed on a real file where the last few words of body text landed
+    // under the panel and became unreadable). The user ruled out both keeping an opaque cover and
+    // enlarging the page to make room, so original content must stay fully visible - meaning the
+    // tradeoff below is intentional and accepted, not an oversight.
+    // Trade-off: PdfSharp has no way to locate and erase a specific string/image already baked
+    // into a page's content stream, so on RECLASSIFICATION (tier change on an already-watermarked
+    // PDF) the old layer is not erased - the new one is drawn on top of it. This only affects PDFs
+    // that get re-watermarked after their tier already changed once; a PDF watermarked for the
+    // first time only ever gets one clean pass. PdfPig (this project's other PDF dependency, used
+    // by DocumentTextExtractor) is read-only and cannot write, hence PdfSharp here.
     private static void WatermarkPdf(string filePath, string[] lines, string tileText, (byte R, byte G, byte B) color, TileVisuals visuals)
     {
         // The scanner only calls this when a file is genuinely new or changed (see
@@ -272,11 +329,25 @@ public static class ContentWatermarker
             var brush = new XSolidBrush(XColor.FromArgb(255, color.R, color.G, color.B));
             var format = new XStringFormat { Alignment = XStringAlignment.Far, LineAlignment = XLineAlignment.Near };
 
+            // Cached per distinct page size (almost always identical across a document's pages) so
+            // a multi-page PDF doesn't re-render the same bitmap once per page.
+            byte[]? cachedTilePng = null;
+            double cachedWidth = -1, cachedHeight = -1;
+
             foreach (var page in document.Pages)
             {
                 using var gfx = XGraphics.FromPdfPage(page);
 
-                DrawPdfTilePattern(gfx, page.Width.Point, page.Height.Point, tileText, color, visuals);
+                if (cachedTilePng is null || cachedWidth != page.Width.Point || cachedHeight != page.Height.Point)
+                {
+                    cachedTilePng = BuildTileLayerPng(page.Width.Point, page.Height.Point, tileText, color, visuals);
+                    cachedWidth = page.Width.Point;
+                    cachedHeight = page.Height.Point;
+                }
+
+                var tileBytes = cachedTilePng;
+                using var tileImage = XImage.FromStream(() => new MemoryStream(tileBytes));
+                gfx.DrawImage(tileImage, 0, 0, page.Width.Point, page.Height.Point);
 
                 const double margin = 18;
                 const double lineHeight = 12;
@@ -296,36 +367,6 @@ public static class ContentWatermarker
             document.Save(temporary);
         }
         File.Move(temporary, filePath, true);
-    }
-
-    // Second, tiled watermark layer - see the class comment. Drawn first (underneath the single
-    // readable corner block) in a staggered grid across the whole page, same text/spacing/opacity
-    // system as the on-screen watermark.
-    private static void DrawPdfTilePattern(XGraphics gfx, double pageWidth, double pageHeight, string tileText, (byte R, byte G, byte B) color, TileVisuals visuals)
-    {
-        var font = new XFont(FontFamily, visuals.FontSize * 0.6, XFontStyleEx.Bold);
-        var brush = new XSolidBrush(XColor.FromArgb(visuals.Alpha, color.R, color.G, color.B));
-        var size = gfx.MeasureString(tileText, font);
-
-        var horizontalSpacing = Math.Max(size.Width * 1.3, visuals.HorizontalSpacing * 0.6);
-        var verticalSpacing = Math.Max(size.Height * 5, visuals.VerticalSpacing * 0.6);
-
-        gfx.TranslateTransform(pageWidth / 2, pageHeight / 2);
-        gfx.RotateTransform(-RotationDegrees);
-
-        var diagonal = Math.Sqrt(pageWidth * pageWidth + pageHeight * pageHeight);
-        var row = 0;
-        for (var y = -diagonal; y < diagonal; y += verticalSpacing, row++)
-        {
-            var rowOffset = row % 2 == 0 ? 0 : horizontalSpacing / 2;
-            for (var x = -diagonal + rowOffset; x < diagonal; x += horizontalSpacing)
-            {
-                gfx.DrawString(tileText, font, brush, new XPoint(x, y));
-            }
-        }
-
-        gfx.RotateTransform(RotationDegrees);
-        gfx.TranslateTransform(-pageWidth / 2, -pageHeight / 2);
     }
 
     // Reads the PDF's extracted text (PdfPig - a separate, read-only library from PdfSharp) and
@@ -358,18 +399,15 @@ public static class ContentWatermarker
     }
 
     // === DOCX: two small right-aligned lines in the document's own header (so they repeat on
-    // every page, in the margin area) - plain Word paragraphs/runs, not a floating shape. This
-    // was originally a floating shape centered on the page and rotated, matching the other
-    // formats - reverted after confirming live that a floating shape (needed for center
-    // positioning/rotation) is directly clickable and deletable from the body view in both Google
-    // Docs and genuine Word Online, and every attempt to lock it against that (read-only document
-    // protection, range-permission exceptions, shape locks) was silently ignored by both. Plain
-    // header text has no such problem: it isn't part of the interactive body view at all in any
-    // editor (needs deliberately entering header-edit mode), which is a basic, universally
-    // supported document feature rather than an obscure protection mechanism - so this trades
-    // away center positioning and rotation for something that's actually hard to touch by
-    // accident. Detects a previously-added block via a marker comment so reclassification replaces
-    // the text in place.
+    // every page, in the margin area) - plain Word paragraphs/runs, not a floating shape - plus the
+    // shared tile-layer PNG (see BuildTileLayerPng) embedded as a plain floating picture covering
+    // the whole page, behind the body text. This was originally a rotated DrawingML shape with the
+    // tile text as live paragraphs - reverted after confirming live on a real user file that its
+    // rotation simply did not render in LibreOffice despite spec-valid markup (two different shape
+    // techniques were tried; neither rotated). A plain embedded picture has no such per-viewer
+    // rendering risk - see the class-level comment for the full reasoning. Detects a
+    // previously-added header via a marker comment so reclassification replaces the header (and
+    // reuses/overwrites its one image part) in place instead of stacking.
     private static void WatermarkDocx(string filePath, string[] lines, string tileText, (byte R, byte G, byte B) color, TileVisuals visuals)
     {
         var temporary = filePath + ".tmp";
@@ -383,12 +421,25 @@ public static class ContentWatermarker
                 if (mainPart is null || body is null)
                     throw new InvalidOperationException("Not a valid Word document body.");
 
+                var (pageWidthEmu, pageHeightEmu) = GetDocxPageSizeEmu(body);
+                var tilePng = BuildTileLayerPng(pageWidthEmu / 12700.0, pageHeightEmu / 12700.0, tileText, color, visuals);
+
                 var existingHeaderPart = mainPart.HeaderParts.FirstOrDefault(HeaderContainsOurMarker);
                 var headerPart = existingHeaderPart ?? mainPart.AddNewPart<HeaderPart>();
 
+                // Reuse the header's existing image part (if this is a reclassification) instead
+                // of adding a second one every time - same "detect and replace in place, don't
+                // accumulate" contract as every other format below.
+                var imagePart = headerPart.ImageParts.FirstOrDefault() ?? headerPart.AddImagePart(ImagePartType.Png);
+                using (var imageStream = imagePart.GetStream(FileMode.Create, FileAccess.Write))
+                {
+                    imageStream.Write(tilePng, 0, tilePng.Length);
+                }
+                var imageRelId = headerPart.GetIdOfPart(imagePart);
+
                 using (var writer = new StreamWriter(headerPart.GetStream(FileMode.Create, FileAccess.Write)))
                 {
-                    writer.Write(BuildDocxWatermarkHeaderXml(lines, tileText, color, visuals));
+                    writer.Write(BuildDocxWatermarkHeaderXml(lines, color, imageRelId, pageWidthEmu, pageHeightEmu));
                 }
 
                 if (existingHeaderPart is null)
@@ -426,11 +477,22 @@ public static class ContentWatermarker
         return reader.ReadToEnd().Contains("CompanyDlpWatermark", StringComparison.Ordinal);
     }
 
-    private static string BuildDocxWatermarkHeaderXml(string[] lines, string tileText, (byte R, byte G, byte B) color, TileVisuals visuals)
+    // Reads the document's actual page size (falls back to US Letter if a document somehow has no
+    // section properties yet) so the embedded tile picture is sized to genuinely cover the real
+    // page - a mismatched size would either leave gaps or spill past the edges. Twips (the
+    // WordprocessingML unit, 1/20 pt) convert to EMU (DrawingML's unit, 12700 per pt) via *635.
+    private static (long WidthEmu, long HeightEmu) GetDocxPageSizeEmu(Body body)
+    {
+        var pageSize = body.Elements<SectionProperties>().FirstOrDefault()?.GetFirstChild<PageSize>();
+        var widthTwips = pageSize?.Width?.Value ?? 12240U;  // US Letter default, 8.5in
+        var heightTwips = pageSize?.Height?.Value ?? 15840U; // 11in
+        return ((long)widthTwips * 635, (long)heightTwips * 635);
+    }
+
+    private static string BuildDocxWatermarkHeaderXml(string[] lines, (byte R, byte G, byte B) color, string imageRelId, long pageWidthEmu, long pageHeightEmu)
     {
         // The true, fully-saturated tier color, not a lightened tint - a plain corner marker like
-        // this never sits over body content, so there's no readability reason to soften it the
-        // way the center-of-page floating shape below needs to.
+        // this never sits over body content, so there's no readability reason to soften it.
         var hex = $"{color.R:X2}{color.G:X2}{color.B:X2}";
 
         var paragraphs = string.Join(Environment.NewLine, lines.Select((line, index) =>
@@ -454,98 +516,59 @@ public static class ContentWatermarker
         <w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
                xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
                xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
-               xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+               xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"
+               xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
         <!--CompanyDlpWatermark-->
         {{paragraphs}}
-        {{BuildDocxTileWatermarkParagraph(tileText, color, visuals)}}
+        {{BuildDocxTileWatermarkPictureXml(imageRelId, pageWidthEmu, pageHeightEmu)}}
         </w:hdr>
         """;
     }
 
-    // Second, tiled watermark layer - see the class comment. Unlike the plain-paragraph corner
-    // block above, covering the whole page necessarily means a floating shape (anchored relative
-    // to the page, behindDoc so it never covers the body's own text) - the same
-    // deletion-by-a-deliberate-user characteristic already accepted for the corner block applies
-    // here too, but that's fine: the point of this second layer is redundancy (two separate things
-    // to find and remove), not achieving what the corner block already couldn't.
-    // Plain WordprocessingML run color (<w:color>) has no alpha channel - unlike PDF/image/PPTX,
-    // which all draw this layer with true compositing transparency, Word text simply doesn't
-    // support that here. Confirmed live 2026-08-26: shipping the full-saturation tier color with
-    // no transparency made this layer fully opaque and it visually collided with the document's
-    // own body text, unreadable. The standard workaround (the same one Word's own built-in
-    // watermark feature uses) is to pre-blend the color toward white instead of relying on real
-    // alpha - a light tint reads as "watermark" against a normal white/light page even though it's
-    // technically 100% opaque.
-    private static string BuildDocxTileWatermarkParagraph(string tileText, (byte R, byte G, byte B) color, TileVisuals visuals)
-    {
-        // *3.0 makes the tint noticeably more visible than a literal alpha translation would give
-        // (plain text has no real alpha here - see the comment above), clamped to 1.0 so a high
-        // configured opacity can never push the blend past the tier color itself and overflow a byte.
-        var tint = BlendTowardWhite(color, Math.Min(1.0, visuals.Alpha / 255.0 * 3.0));
-        var hex = $"{tint.R:X2}{tint.G:X2}{tint.B:X2}";
-        var repeatedLine = string.Join("          ", Enumerable.Repeat(tileText, 2));
-        var rotation = (long)(-RotationDegrees * 60000);
-        var fontHalfPoints = visuals.FontSize;
-
-        // Rows are spaced out proportionally to the policy's vertical spacing rather than a fixed
-        // count, so an admin's spacing setting actually changes the file layer's density the same
-        // way it changes the screen overlay's.
-        var rowCount = Math.Clamp(3000 / visuals.VerticalSpacing, 6, 14);
-        var paragraphs = string.Join(Environment.NewLine, Enumerable.Range(0, rowCount).Select(_ =>
-            $$"""
-              <w:p>
-                <w:pPr><w:jc w:val="center"/><w:spacing w:before="200" w:after="200"/></w:pPr>
-                <w:r>
-                  <w:rPr><w:rFonts w:ascii="{{FontFamily}}" w:hAnsi="{{FontFamily}}"/><w:b/><w:sz w:val="{{fontHalfPoints}}"/><w:color w:val="{{hex}}"/></w:rPr>
-                  <w:t xml:space="preserve">{{System.Security.SecurityElement.Escape(repeatedLine)}}</w:t>
-                </w:r>
-              </w:p>
-              """));
-
-        return $$"""
-        <w:p>
-          <w:r>
-            <w:drawing>
-              <wp:anchor behindDoc="1" locked="0" layoutInCell="1" allowOverlap="1" relativeHeight="251658241" simplePos="0">
-                <wp:simplePos x="0" y="0"/>
-                <wp:positionH relativeFrom="page"><wp:align>center</wp:align></wp:positionH>
-                <wp:positionV relativeFrom="page"><wp:align>center</wp:align></wp:positionV>
-                <wp:extent cx="9000000" cy="9000000"/>
-                <wp:wrapNone/>
-                <wp:docPr id="999003" name="CompanyDlpTileWatermark"/>
-                <wp:cNvGraphicFramePr/>
-                <a:graphic>
-                  <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
-                    <wps:wsp>
-                      <wps:cNvSpPr/>
-                      <wps:spPr>
-                        <a:xfrm rot="{{rotation}}">
-                          <a:off x="0" y="0"/>
-                          <a:ext cx="9000000" cy="9000000"/>
-                        </a:xfrm>
-                        <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
-                        <a:noFill/>
-                      </wps:spPr>
-                      <wps:txbx>
-                        <w:txbxContent>
-        {{paragraphs}}
-                        </w:txbxContent>
-                      </wps:txbx>
-                      <wps:bodyPr wrap="square" lIns="0" tIns="0" rIns="0" bIns="0" anchor="ctr"/>
-                    </wps:wsp>
-                  </a:graphicData>
-                </a:graphic>
-              </wp:anchor>
-            </w:drawing>
-          </w:r>
-        </w:p>
-        """;
-    }
+    // Plain floating picture, full page size, centered on the page, behind the body text - see the
+    // class-level comment for why this replaced a rotated DrawingML shape.
+    private static string BuildDocxTileWatermarkPictureXml(string imageRelId, long widthEmu, long heightEmu) => $$"""
+    <w:p>
+      <w:r>
+        <w:drawing>
+          <wp:anchor behindDoc="1" locked="0" layoutInCell="1" allowOverlap="1" relativeHeight="251658241" simplePos="0">
+            <wp:simplePos x="0" y="0"/>
+            <wp:positionH relativeFrom="page"><wp:align>center</wp:align></wp:positionH>
+            <wp:positionV relativeFrom="page"><wp:align>center</wp:align></wp:positionV>
+            <wp:extent cx="{{widthEmu}}" cy="{{heightEmu}}"/>
+            <wp:wrapNone/>
+            <wp:docPr id="999003" name="CompanyDlpTileWatermark"/>
+            <wp:cNvGraphicFramePr/>
+            <a:graphic>
+              <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
+                <pic:pic>
+                  <pic:nvPicPr>
+                    <pic:cNvPr id="0" name="CompanyDlpTileWatermarkImage"/>
+                    <pic:cNvPicPr/>
+                  </pic:nvPicPr>
+                  <pic:blipFill>
+                    <a:blip r:embed="{{imageRelId}}"/>
+                    <a:stretch><a:fillRect/></a:stretch>
+                  </pic:blipFill>
+                  <pic:spPr>
+                    <a:xfrm><a:off x="0" y="0"/><a:ext cx="{{widthEmu}}" cy="{{heightEmu}}"/></a:xfrm>
+                    <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+                  </pic:spPr>
+                </pic:pic>
+              </a:graphicData>
+            </a:graphic>
+          </wp:anchor>
+        </w:drawing>
+      </w:r>
+    </w:p>
+    """;
 
     // === PPTX: a text box on every slide's own shape tree (rather than the slide master) -
-    // simpler and more predictable than relying on master/layout inheritance rules - rotated via
-    // the shape's own transform, translucent tier color via DrawingML's real alpha modifier, no
-    // fill behind it. Detects and replaces a previous watermark shape by name.
+    // simpler and more predictable than relying on master/layout inheritance rules, non-rotated,
+    // translucent tier color via DrawingML's real alpha modifier, no fill behind it - plus the
+    // shared tile-layer PNG (see BuildTileLayerPng) embedded as a plain picture covering the whole
+    // slide, behind everything else. Detects and replaces a previous watermark shape/picture (and
+    // its image part) by name, so reclassification does not stack or leave orphaned media parts.
     private static void WatermarkPptx(string filePath, string[] lines, string tileText, (byte R, byte G, byte B) color, TileVisuals visuals)
     {
         var temporary = filePath + ".tmp";
@@ -559,18 +582,26 @@ public static class ContentWatermarker
                 var slideSize = presentationPart.Presentation.SlideSize;
                 var slideWidth = slideSize?.Cx?.Value ?? 9144000L;
                 var slideHeight = slideSize?.Cy?.Value ?? 6858000L;
+                var tilePng = BuildTileLayerPng(slideWidth / 12700.0, slideHeight / 12700.0, tileText, color, visuals);
 
                 foreach (var slidePart in presentationPart.SlideParts)
                 {
                     var shapeTree = slidePart.Slide?.CommonSlideData?.ShapeTree;
                     if (shapeTree is null) continue;
 
+                    RemovePptxTileWatermark(slidePart, shapeTree);
                     shapeTree.Elements<P.Shape>().FirstOrDefault(IsOurWatermarkShape)?.Remove();
-                    shapeTree.Elements<P.Shape>().FirstOrDefault(IsOurTileWatermarkShape)?.Remove();
 
-                    // Tile layer first (appended first = sits behind, since later shapes render on
-                    // top in DrawingML's z-order), then the single readable block on top of it.
-                    shapeTree.AppendChild(new P.Shape(BuildPptxTileWatermarkShapeXml(tileText, color, visuals, slideWidth, slideHeight)));
+                    var imagePart = slidePart.AddImagePart(ImagePartType.Png);
+                    using (var imageStream = imagePart.GetStream(FileMode.Create, FileAccess.Write))
+                    {
+                        imageStream.Write(tilePng, 0, tilePng.Length);
+                    }
+                    var imageRelId = slidePart.GetIdOfPart(imagePart);
+
+                    // Tile picture first (sits behind, since later shapes render on top of earlier
+                    // ones in DrawingML's z-order), then the single readable corner block on top.
+                    shapeTree.AppendChild(new P.Picture(BuildPptxTileWatermarkPictureXml(imageRelId, slideWidth, slideHeight)));
                     shapeTree.AppendChild(new P.Shape(BuildPptxWatermarkShapeXml(lines, color, slideWidth, slideHeight)));
                     slidePart.Slide!.Save();
                 }
@@ -583,64 +614,44 @@ public static class ContentWatermarker
         }
     }
 
+    private static void RemovePptxTileWatermark(SlidePart slidePart, P.ShapeTree shapeTree)
+    {
+        var existingPicture = shapeTree.Elements<P.Picture>().FirstOrDefault(IsOurTileWatermarkPicture);
+        if (existingPicture is null) return;
+
+        var blipId = existingPicture.Descendants<DocumentFormat.OpenXml.Drawing.Blip>().FirstOrDefault()?.Embed?.Value;
+        existingPicture.Remove();
+        if (blipId is not null && slidePart.GetPartById(blipId) is ImagePart oldImagePart)
+        {
+            slidePart.DeletePart(oldImagePart);
+        }
+    }
+
     private static bool IsOurWatermarkShape(P.Shape shape) =>
         shape.NonVisualShapeProperties?.NonVisualDrawingProperties?.Name?.Value == "CompanyDlpWatermark";
 
-    private static bool IsOurTileWatermarkShape(P.Shape shape) =>
-        shape.NonVisualShapeProperties?.NonVisualDrawingProperties?.Name?.Value == "CompanyDlpTileWatermark";
+    private static bool IsOurTileWatermarkPicture(P.Picture picture) =>
+        picture.NonVisualPictureProperties?.NonVisualDrawingProperties?.Name?.Value == "CompanyDlpTileWatermark";
 
-    // Second, tiled watermark layer - see the class comment. A shape covering the entire slide,
-    // its text body filled with the tile text repeated across many lines (each line itself
-    // repeating the text several times with spacing) - DrawingML text only flows top-to-bottom, so
-    // this "wide lines, many of them" approach is how a real 2D tiled look gets approximated
-    // without direct pixel-level control the way the PDF/image versions have. Uses DrawingML's
-    // real <a:alpha> modifier (unlike DOCX, which has no equivalent for plain text runs), so this
-    // one uses the tier color's true opacity rather than a pre-blended tint.
-    private static string BuildPptxTileWatermarkShapeXml(string tileText, (byte R, byte G, byte B) color, TileVisuals visuals, long slideWidth, long slideHeight)
-    {
-        var hex = $"{color.R:X2}{color.G:X2}{color.B:X2}";
-        var alphaThousandths = (int)(visuals.Alpha / 255.0 * 100000);
-        var repeatedLine = string.Join("          ", Enumerable.Repeat(tileText, 3));
-        var rowCount = Math.Clamp(3000 / visuals.VerticalSpacing, 6, 14);
-        var paragraphs = string.Join(Environment.NewLine, Enumerable.Range(0, rowCount).Select(_ =>
-            $$"""
-              <a:p>
-                <a:pPr algn="ctr"/>
-                <a:r>
-                  <a:rPr lang="en-US" sz="{{visuals.FontSize * 100}}" b="1">
-                    <a:solidFill><a:srgbClr val="{{hex}}"><a:alpha val="{{alphaThousandths}}"/></a:srgbClr></a:solidFill>
-                    <a:latin typeface="{{FontFamily}}"/>
-                  </a:rPr>
-                  <a:t>{{System.Security.SecurityElement.Escape(repeatedLine)}}</a:t>
-                </a:r>
-              </a:p>
-              """));
-
-        var rotation = (long)(-RotationDegrees * 60000);
-
-        return $$"""
-        <p:sp xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
-          <p:nvSpPr>
-            <p:cNvPr id="999002" name="CompanyDlpTileWatermark"/>
-            <p:cNvSpPr/>
-            <p:nvPr/>
-          </p:nvSpPr>
-          <p:spPr>
-            <a:xfrm rot="{{rotation}}">
-              <a:off x="{{-slideWidth / 4}}" y="{{-slideHeight / 4}}"/>
-              <a:ext cx="{{slideWidth * 3 / 2}}" cy="{{slideHeight * 3 / 2}}"/>
-            </a:xfrm>
-            <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
-            <a:noFill/>
-          </p:spPr>
-          <p:txBody>
-            <a:bodyPr wrap="square" anchor="ctr"/>
-            <a:lstStyle/>
-        {{paragraphs}}
-          </p:txBody>
-        </p:sp>
-        """;
-    }
+    // Plain picture, full slide size, no rotation needed (baked into the pixels already) - see the
+    // class-level comment for why this replaced a rotated DrawingML text shape.
+    private static string BuildPptxTileWatermarkPictureXml(string imageRelId, long slideWidth, long slideHeight) => $$"""
+    <p:pic xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+      <p:nvPicPr>
+        <p:cNvPr id="999002" name="CompanyDlpTileWatermark"/>
+        <p:cNvPicPr/>
+        <p:nvPr/>
+      </p:nvPicPr>
+      <p:blipFill>
+        <a:blip r:embed="{{imageRelId}}"/>
+        <a:stretch><a:fillRect/></a:stretch>
+      </p:blipFill>
+      <p:spPr>
+        <a:xfrm><a:off x="0" y="0"/><a:ext cx="{{slideWidth}}" cy="{{slideHeight}}"/></a:xfrm>
+        <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+      </p:spPr>
+    </p:pic>
+    """;
 
     // Corner block: right-aligned, non-rotated, no backing fill - matches PDF/images/DOCX.
     // Deliberately has no solid fill behind the text (see WatermarkPdf's comment for why): an
@@ -695,17 +706,21 @@ public static class ContentWatermarker
         """;
     }
 
-    // === XLSX: a floating DrawingML shape anchored to each worksheet, same idea as the PPTX tile
-    // shape - Excel's own header/footer area was deliberately NOT used here, even though it's the
+    // === XLSX: a floating DrawingML picture anchored to each worksheet, same idea as the PPTX tile
+    // picture - Excel's own header/footer area was deliberately NOT used here, even though it's the
     // closest built-in analog to DOCX's header: a worksheet's header/footer only renders in Print
     // Layout view or an actual print/export, and is completely invisible in the default Normal
     // view almost every user works in day to day - a watermark nobody sees while editing defeats
-    // the point. A floating shape, by contrast, is visible immediately in Normal view.
-    // Best-effort by design: the shape is anchored over a generous fixed cell range (see
-    // AbsoluteAnchorExtent below) covering a typical viewport/print area rather than the sheet's
-    // full (functionally unbounded) grid - there is no "whole sheet" to tile the way a PDF page or
-    // slide has fixed bounds. Detects and replaces a previous watermark shape by name, the same
-    // pattern WatermarkPptx uses, so reclassification does not stack shapes.
+    // the point. A floating picture, by contrast, is visible immediately in Normal view.
+    // Best-effort by design: the picture is anchored over a generous fixed cell range (see
+    // XlsxTileWidthPoints/HeightPoints below) covering a typical viewport/print area rather than
+    // the sheet's full (functionally unbounded) grid - there is no "whole sheet" to tile the way a
+    // PDF page or slide has fixed bounds. Detects and replaces a previous watermark anchor by name
+    // (and deletes its image part), the same pattern WatermarkPptx uses, so reclassification does
+    // not stack shapes or leave orphaned media parts.
+    private const double XlsxTileWidthPoints = 960;  // ~20 default-width columns
+    private const double XlsxTileHeightPoints = 900; // ~60 default-height rows
+
     private static void WatermarkXlsx(string filePath, string[] lines, string tileText, (byte R, byte G, byte B) color, TileVisuals visuals)
     {
         var temporary = filePath + ".tmp";
@@ -716,10 +731,11 @@ public static class ContentWatermarker
             {
                 var workbookPart = document.WorkbookPart
                     ?? throw new InvalidOperationException("Not a valid Excel workbook.");
+                var tilePng = BuildTileLayerPng(XlsxTileWidthPoints, XlsxTileHeightPoints, tileText, color, visuals);
 
                 foreach (var worksheetPart in workbookPart.WorksheetParts)
                 {
-                    ApplyXlsxWorksheetWatermark(worksheetPart, lines, tileText, color, visuals);
+                    ApplyXlsxWorksheetWatermark(worksheetPart, lines, tilePng, color, visuals);
                 }
             }
             File.Move(temporary, filePath, true);
@@ -730,7 +746,7 @@ public static class ContentWatermarker
         }
     }
 
-    private static void ApplyXlsxWorksheetWatermark(WorksheetPart worksheetPart, string[] lines, string tileText, (byte R, byte G, byte B) color, TileVisuals visuals)
+    private static void ApplyXlsxWorksheetWatermark(WorksheetPart worksheetPart, string[] lines, byte[] tilePng, (byte R, byte G, byte B) color, TileVisuals visuals)
     {
         var drawingsPart = worksheetPart.DrawingsPart;
         Xdr.WorksheetDrawing worksheetDrawing;
@@ -750,15 +766,28 @@ public static class ContentWatermarker
         }
 
         // Remove any previous watermark anchor(s) by their shape name before adding fresh ones -
-        // same "detect and replace, don't stack" pattern as WatermarkPptx.
+        // same "detect and replace, don't stack" pattern as WatermarkPptx - and delete the old
+        // tile's image part too, so reclassification doesn't leave orphaned media parts behind.
         foreach (var anchor in worksheetDrawing.Elements<Xdr.TwoCellAnchor>()
                      .Where(a => IsOurXlsxWatermarkAnchor(a, "CompanyDlpWatermark") || IsOurXlsxWatermarkAnchor(a, "CompanyDlpTileWatermark"))
                      .ToList())
         {
+            var blipId = anchor.Descendants<DocumentFormat.OpenXml.Drawing.Blip>().FirstOrDefault()?.Embed?.Value;
             anchor.Remove();
+            if (blipId is not null && drawingsPart.GetPartById(blipId) is ImagePart oldImagePart)
+            {
+                drawingsPart.DeletePart(oldImagePart);
+            }
         }
 
-        worksheetDrawing.Append(BuildXlsxTileAnchor(tileText, color, visuals));
+        var imagePart = drawingsPart.AddImagePart(ImagePartType.Png);
+        using (var imageStream = imagePart.GetStream(FileMode.Create, FileAccess.Write))
+        {
+            imageStream.Write(tilePng, 0, tilePng.Length);
+        }
+        var imageRelId = drawingsPart.GetIdOfPart(imagePart);
+
+        worksheetDrawing.Append(BuildXlsxTileAnchor(imageRelId));
         worksheetDrawing.Append(BuildXlsxCornerAnchor(lines, color));
 
         // Explicit Save() on both modified part roots - matches WatermarkPptx's
@@ -774,51 +803,33 @@ public static class ContentWatermarker
 
     // Covers roughly the first 60 rows x 20 columns from A1 - a generous, fixed viewport/print-area
     // approximation (see the class comment above WatermarkXlsx for why a true infinite tile isn't
-    // possible on a grid with no fixed page bounds).
-    private static Xdr.TwoCellAnchor BuildXlsxTileAnchor(string tileText, (byte R, byte G, byte B) color, TileVisuals visuals)
+    // possible on a grid with no fixed page bounds). No rotation attribute needed - baked into the
+    // picture's pixels already.
+    private static Xdr.TwoCellAnchor BuildXlsxTileAnchor(string imageRelId)
     {
-        var hex = $"{color.R:X2}{color.G:X2}{color.B:X2}";
-        var alphaThousandths = (int)(visuals.Alpha / 255.0 * 100000);
-        var repeatedLine = string.Join("          ", Enumerable.Repeat(tileText, 3));
-        var rowCount = Math.Clamp(3000 / visuals.VerticalSpacing, 6, 14);
-        var paragraphs = string.Join(Environment.NewLine, Enumerable.Range(0, rowCount).Select(_ =>
-            $$"""
-              <a:p>
-                <a:pPr algn="ctr"/>
-                <a:r>
-                  <a:rPr lang="en-US" sz="{{visuals.FontSize * 100}}" b="1">
-                    <a:solidFill><a:srgbClr val="{{hex}}"><a:alpha val="{{alphaThousandths}}"/></a:srgbClr></a:solidFill>
-                    <a:latin typeface="{{FontFamily}}"/>
-                  </a:rPr>
-                  <a:t>{{System.Security.SecurityElement.Escape(repeatedLine)}}</a:t>
-                </a:r>
-              </a:p>
-              """));
-
-        var rotation = (int)(-RotationDegrees * 60000);
+        var extCx = (long)(XlsxTileWidthPoints * 12700);
+        var extCy = (long)(XlsxTileHeightPoints * 12700);
         var shapeXml = $$"""
-        <xdr:sp xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" macro="" textlink="">
-          <xdr:nvSpPr>
+        <xdr:pic xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+          <xdr:nvPicPr>
             <xdr:cNvPr id="999002" name="CompanyDlpTileWatermark"/>
-            <xdr:cNvSpPr/>
-          </xdr:nvSpPr>
+            <xdr:cNvPicPr/>
+          </xdr:nvPicPr>
+          <xdr:blipFill>
+            <a:blip r:embed="{{imageRelId}}"/>
+            <a:stretch><a:fillRect/></a:stretch>
+          </xdr:blipFill>
           <xdr:spPr>
-            <a:xfrm rot="{{rotation}}"><a:off x="0" y="0"/><a:ext cx="7000000" cy="9000000"/></a:xfrm>
+            <a:xfrm><a:off x="0" y="0"/><a:ext cx="{{extCx}}" cy="{{extCy}}"/></a:xfrm>
             <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
-            <a:noFill/>
           </xdr:spPr>
-          <xdr:txBody>
-            <a:bodyPr wrap="square" anchor="ctr"/>
-            <a:lstStyle/>
-        {{paragraphs}}
-          </xdr:txBody>
-        </xdr:sp>
+        </xdr:pic>
         """;
 
         return new Xdr.TwoCellAnchor(
             new Xdr.FromMarker { ColumnId = new Xdr.ColumnId("0"), ColumnOffset = new Xdr.ColumnOffset("0"), RowId = new Xdr.RowId("0"), RowOffset = new Xdr.RowOffset("0") },
             new Xdr.ToMarker { ColumnId = new Xdr.ColumnId("20"), ColumnOffset = new Xdr.ColumnOffset("0"), RowId = new Xdr.RowId("60"), RowOffset = new Xdr.RowOffset("0") },
-            new Xdr.Shape(shapeXml),
+            new Xdr.Picture(shapeXml),
             new Xdr.ClientData())
         { EditAs = Xdr.EditAsValues.Absolute };
     }
@@ -869,10 +880,12 @@ public static class ContentWatermarker
     }
 
     // === Images: draw the corner lines directly onto the pixels, in the bottom-right corner,
-    // non-rotated, in the true tier color, with NO backing panel. Deliberately has no opaque
-    // background behind the text (see WatermarkPdf's comment for the full reasoning): an opaque
-    // panel here would permanently paint over whatever image pixels sit in that corner, which the
-    // user ruled out.
+    // non-rotated, in the true tier color, with NO backing panel, plus the shared tile layer (see
+    // DrawTileLayer) drawn straight onto the same canvas - no intermediate bitmap/embed step needed
+    // here since this format already IS a raster canvas.
+    // Deliberately has no opaque background behind the corner text (see WatermarkPdf's comment for
+    // the full reasoning): an opaque panel here would permanently paint over whatever image pixels
+    // sit in that corner, which the user ruled out.
     // Trade-off: each watermark pass composites onto whatever is already on disk (including any
     // earlier watermark pass's pixels, since there is no separate "original" copy kept around), so
     // on RECLASSIFICATION the previous pass's corner text is not erased - the new text is drawn on
@@ -890,7 +903,10 @@ public static class ContentWatermarker
                 graphics.SmoothingMode = SmoothingMode.AntiAlias;
                 graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
 
-                DrawImageTilePattern(graphics, original.Width, original.Height, tileText, color, visuals);
+                // pixelsPerPoint = 1: an image has no physical "points" unit, so treat the policy's
+                // spacing/font numbers as pixels directly - the same 1:1 treatment this method used
+                // before this layer was unified with the other formats.
+                DrawTileLayer(graphics, original.Width, original.Height, 1.0, tileText, color, visuals);
 
                 var fontSize = Math.Max(8f, Math.Min(original.Width, original.Height) / 26f);
                 using var font = new System.Drawing.Font(FontFamily, fontSize, System.Drawing.FontStyle.Bold);
@@ -911,36 +927,6 @@ public static class ContentWatermarker
             canvas.Save(temporary, GetImageFormat(filePath));
         }
         File.Move(temporary, filePath, true);
-    }
-
-    // Staggered tiled grid, matching CompanyDlp.Desktop's on-screen watermark pattern
-    // (WatermarkWindow.RenderWatermarks) - same text/spacing/opacity system, alternating row
-    // offsets so it doesn't line up into obvious columns.
-    private static void DrawImageTilePattern(Graphics graphics, int width, int height, string tileText, (byte R, byte G, byte B) color, TileVisuals visuals)
-    {
-        var fontSize = Math.Max(8f, Math.Min(width, height) / 45f);
-        using var font = new System.Drawing.Font(FontFamily, fontSize, System.Drawing.FontStyle.Bold);
-        using var brush = new SolidBrush(System.Drawing.Color.FromArgb(visuals.Alpha, color.R, color.G, color.B));
-        var size = graphics.MeasureString(tileText, font);
-
-        var horizontalSpacing = Math.Max(size.Width * 1.3f, visuals.HorizontalSpacing * 0.9f);
-        var verticalSpacing = Math.Max(size.Height * 5f, visuals.VerticalSpacing * 0.9f);
-
-        var state = graphics.Save();
-        graphics.RotateTransform((float)-RotationDegrees);
-
-        var diagonal = (float)Math.Sqrt((double)width * width + (double)height * height);
-        var row = 0;
-        for (var y = -diagonal; y < diagonal; y += verticalSpacing, row++)
-        {
-            var rowOffset = row % 2 == 0 ? 0 : horizontalSpacing / 2;
-            for (var x = -diagonal + rowOffset; x < diagonal; x += horizontalSpacing)
-            {
-                graphics.DrawString(tileText, font, brush, x, y);
-            }
-        }
-
-        graphics.Restore(state);
     }
 
     private static ImageFormat GetImageFormat(string filePath) =>
