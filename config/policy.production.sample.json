@@ -212,6 +212,6 @@
                                "maximumFileSizeBytes":  2147483648,
                                "portalBaseUrl":  "https://admin.ameen-dlp.com",
                                "filenameTaggingEnabled":  true,
-                               "contentWatermarkingEnabled":  false
+                               "contentWatermarkingEnabled":  true
                            }
 }
