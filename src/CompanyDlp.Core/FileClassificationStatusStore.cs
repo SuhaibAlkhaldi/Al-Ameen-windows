@@ -29,8 +29,21 @@ public sealed record FileClassificationStatusEntry(
 // FileClassificationCache via a live-computed hash, unaffected by this store.
 public sealed class FileClassificationStatusStore(PolicyStore policyStore, ILogger<FileClassificationStatusStore> logger)
 {
+    // Confirmed live 2026-08-26: Set() used to call Save() synchronously on every single call, and
+    // Save() always serializes+writes the ENTIRE dictionary (not just the changed entry). A
+    // background scan walking tens of thousands of files therefore did tens of thousands of full-
+    // dictionary rewrites, each one slower than the last as the dictionary grew - on a Desktop with
+    // ~66,000 files this made the scanner's real, measured CPU usage (confirmed via Get-Process,
+    // ~7.5% sustained) produce zero visible progress for many minutes, because nearly all of that
+    // work was rewriting the same growing JSON blob over and over rather than doing anything new.
+    // This store is purely a display cache (see the class comment above - PermissionEvaluator never
+    // reads it), so losing the last couple of seconds of updates in a crash is an acceptable
+    // trade-off for not serializing the whole file on every single classified item.
+    private static readonly TimeSpan SaveThrottleInterval = TimeSpan.FromSeconds(2);
     private readonly object _sync = new();
     private Dictionary<string, FileClassificationStatusEntry>? _entries;
+    private bool _dirty;
+    private DateTime _lastSaveUtc = DateTime.MinValue;
 
     // Case-insensitive, full-path form so the same file is matched regardless of how its path was
     // spelled (relative segments, drive-letter casing, trailing separators) by different callers
@@ -64,14 +77,16 @@ public sealed class FileClassificationStatusStore(PolicyStore policyStore, ILogg
         {
             EnsureLoaded();
             _entries![NormalizePath(entry.Path)] = entry;
-            Save();
+            SaveThrottled();
         }
     }
 
     // Used when a path stops being valid without a replacement entry taking its place - currently
     // only by FileInventoryScanner after a filename-tagging rename, to drop the old path's entry
     // once a fresh one is written under the new path (see ApplyFilenameTag). Without this, a renamed
-    // file would leave a stale, permanently-orphaned entry behind under its old name.
+    // file would leave a stale, permanently-orphaned entry behind under its old name. Filename tagging
+    // is off by default and this only fires on an actual rename, so it stays immediate/un-throttled -
+    // it was never the source of the write-storm Set() had.
     public void Delete(string path)
     {
         if (string.IsNullOrWhiteSpace(path)) return;
@@ -80,6 +95,31 @@ public sealed class FileClassificationStatusStore(PolicyStore policyStore, ILogg
             EnsureLoaded();
             if (_entries!.Remove(NormalizePath(path))) Save();
         }
+    }
+
+    // Forces any pending throttled write out to disk immediately - called by FileInventoryScanner
+    // once at the end of every TickAsync pass so a tick's last handful of updates (the ones that
+    // landed inside the most recent SaveThrottleInterval window) are never left sitting in memory
+    // indefinitely if the next tick is delayed or the service stops.
+    public void Flush()
+    {
+        lock (_sync)
+        {
+            if (_dirty) Save();
+        }
+    }
+
+    // Always updates the in-memory dictionary the instant Set()/Delete() is called (TryGet/GetAll
+    // are correct immediately either way) - only the disk WRITE is deferred, and only while updates
+    // are arriving faster than SaveThrottleInterval. The first Set() after a quiet period still
+    // writes immediately (DateTime.MinValue default plus this being the first call after Flush()
+    // resets _dirty makes the elapsed-time check pass), so a single isolated classification (the
+    // common case outside a bulk background scan) is never delayed.
+    private void SaveThrottled()
+    {
+        _dirty = true;
+        if (DateTime.UtcNow - _lastSaveUtc < SaveThrottleInterval) return;
+        Save();
     }
 
     private void EnsureLoaded()
@@ -113,6 +153,8 @@ public sealed class FileClassificationStatusStore(PolicyStore policyStore, ILogg
             var temporary = path + ".tmp";
             File.WriteAllText(temporary, JsonSerializer.Serialize(_entries!.Values, JsonDefaults.Options));
             File.Move(temporary, path, true);
+            _dirty = false;
+            _lastSaveUtc = DateTime.UtcNow;
         }
         catch (Exception exception)
         {

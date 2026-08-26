@@ -68,21 +68,34 @@ public sealed class FileInventoryScanner(
         var context = interactiveUserContextProvider.GetActiveConsoleUser();
         var wasBackfillPending = !cache.BackfillCompleted;
 
-        foreach (var folder in fileClassification.WatchedFolders)
+        // try/finally, not a plain sequential call after the loop: every early `return` below (
+        // cancellation mid-walk) must still flush whatever SaveThrottled() left sitting in memory -
+        // see FileClassificationStatusStore's throttling comment. Without this, stopping the service
+        // mid-scan could silently drop up to SaveThrottleInterval's worth of already-classified
+        // results that were never an issue before throttling existed (every Set() used to write
+        // immediately).
+        try
         {
-            if (cancellationToken.IsCancellationRequested) return;
-
-            var expanded = Environment.ExpandEnvironmentVariables(folder);
-            if (!Directory.Exists(expanded)) continue;
-
-            foreach (var path in EnumerateFilesSafely(expanded))
+            foreach (var folder in fileClassification.WatchedFolders)
             {
                 if (cancellationToken.IsCancellationRequested) return;
-                await ClassifyIfNeededAsync(path, fileClassification, context, cancellationToken);
-            }
-        }
 
-        if (wasBackfillPending) cache.BackfillCompleted = true;
+                var expanded = Environment.ExpandEnvironmentVariables(folder);
+                if (!Directory.Exists(expanded)) continue;
+
+                foreach (var path in EnumerateFilesSafely(expanded))
+                {
+                    if (cancellationToken.IsCancellationRequested) return;
+                    await ClassifyIfNeededAsync(path, fileClassification, context, cancellationToken);
+                }
+            }
+
+            if (wasBackfillPending) cache.BackfillCompleted = true;
+        }
+        finally
+        {
+            statusStore.Flush();
+        }
     }
 
     // Runs once, before this process's very first tick - see _lastSeenWriteTimes's comment for why.
