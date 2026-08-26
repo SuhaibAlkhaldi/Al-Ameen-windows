@@ -218,7 +218,7 @@ namespace CompanyDlp.ShellExtension.Register
         // sensitivity tier before attempting to decrypt it - silently stayed blank for every .dlpenc
         // file, confirmed live 2026-08-25. FileClassificationStatusResolver.ResolveAsync has the
         // matching .dlpenc-aware branch that makes a value actually available once Explorer asks for it.
-        private static readonly string[] ClassifiedExtensions = { ".txt", ".pdf", ".docx", ".jpg", ".jpeg", ".png", ".dlpenc" };
+        private static readonly string[] ClassifiedExtensions = { ".txt", ".pdf", ".docx", ".pptx", ".xlsx", ".jpg", ".jpeg", ".png", ".dlpenc" };
 
         private static void UnregisterClassificationColumn()
         {

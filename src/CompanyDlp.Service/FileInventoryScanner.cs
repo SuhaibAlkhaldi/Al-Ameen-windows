@@ -101,7 +101,7 @@ public sealed class FileInventoryScanner(
                 foreach (var path in EnumerateFilesSafely(expanded))
                 {
                     if (cancellationToken.IsCancellationRequested) return;
-                    await ClassifyIfNeededAsync(path, fileClassification, context, cancellationToken);
+                    await ClassifyIfNeededAsync(path, fileClassification, policy.Watermark, context, cancellationToken);
                 }
             }
 
@@ -170,6 +170,7 @@ public sealed class FileInventoryScanner(
     private async Task ClassifyIfNeededAsync(
         string path,
         FileClassificationPolicy policy,
+        WatermarkPolicy watermarkPolicy,
         ClientContext context,
         CancellationToken cancellationToken)
     {
@@ -256,7 +257,7 @@ public sealed class FileInventoryScanner(
         {
             var scannedAtUtc = DateTimeOffset.UtcNow;
             var (taggedPath, taggedNormalized) = ApplyFilenameTag(path, normalized, cached.Classification, policy);
-            var effectiveWriteTimeUtc = ApplyContentWatermarkIfEnabled(taggedPath, cached.Classification, scannedAtUtc, policy, info.LastWriteTimeUtc);
+            var effectiveWriteTimeUtc = ApplyContentWatermarkIfEnabled(taggedPath, cached.Classification, scannedAtUtc, policy, watermarkPolicy, context, info.LastWriteTimeUtc);
             _lastSeenWriteTimes.Remove(path);
             _lastSeenWriteTimes[taggedPath] = effectiveWriteTimeUtc;
             if (taggedNormalized != normalized) statusStore.Delete(normalized);
@@ -323,7 +324,7 @@ public sealed class FileInventoryScanner(
             {
                 var scannedAtUtc = DateTimeOffset.UtcNow;
                 var (taggedPath, taggedNormalized) = ApplyFilenameTag(path, normalized, result.Classification, policy);
-                var effectiveWriteTimeUtc = ApplyContentWatermarkIfEnabled(taggedPath, result.Classification, scannedAtUtc, policy, info.LastWriteTimeUtc);
+                var effectiveWriteTimeUtc = ApplyContentWatermarkIfEnabled(taggedPath, result.Classification, scannedAtUtc, policy, watermarkPolicy, context, info.LastWriteTimeUtc);
                 _lastSeenWriteTimes.Remove(path);
                 _lastSeenWriteTimes[taggedPath] = effectiveWriteTimeUtc;
                 if (taggedNormalized != normalized) statusStore.Delete(normalized);
@@ -387,10 +388,12 @@ public sealed class FileInventoryScanner(
     // LastWriteTimeUtc, so that must be re-read from disk after a successful watermark - reusing
     // the pre-watermark timestamp here would make the very next tick see what looks like a fresh
     // edit (our own write) and loop forever: reclassify -> re-watermark -> reclassify.
-    private DateTime ApplyContentWatermarkIfEnabled(string path, string classification, DateTimeOffset scannedAtUtc, FileClassificationPolicy policy, DateTime fallbackWriteTimeUtc)
+    private DateTime ApplyContentWatermarkIfEnabled(
+        string path, string classification, DateTimeOffset scannedAtUtc, FileClassificationPolicy policy,
+        WatermarkPolicy watermarkPolicy, ClientContext context, DateTime fallbackWriteTimeUtc)
     {
         if (!policy.ContentWatermarkingEnabled) return fallbackWriteTimeUtc;
-        if (!ContentWatermarker.ApplyWatermark(path, classification, scannedAtUtc, logger)) return fallbackWriteTimeUtc;
+        if (!ContentWatermarker.ApplyWatermark(path, classification, scannedAtUtc, context, watermarkPolicy, logger)) return fallbackWriteTimeUtc;
 
         try
         {
