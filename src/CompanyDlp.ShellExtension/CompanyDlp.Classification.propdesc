@@ -23,16 +23,25 @@
        the property registered correctly (confirmed live via PSGetNameFromPropertyKey) but still
        never appeared in Explorer's right-click column header > More... dialog, because it was
        never marked viewable - registered and functional is not the same as visible in that UI.
-    4. Found 2026-08-25, on a machine where 1-3 above were already fixed and the schema content was
-       otherwise byte-identical to a version that had "registered correctly" before, yet
-       PSRegisterPropertySchema still returned 0x000401A0 every time (confirmed via a full registry
-       search for this property's formatID, by both name AND data, finding zero references anywhere
-       in HKLM\SOFTWARE - so this was never a stale/stuck prior registration, it was failing fresh on
-       every attempt). <typeInfo> was placed BEFORE <labelInfo>. The propertyDescription type's XSD
-       sequence is order-sensitive (description, searchInfo, labelInfo, aliasInfo, stringList,
-       typeInfo, displayInfo, ...) - an xs:sequence validator rejects/truncates elements that appear
-       out of that order, exactly matching "one or more property descriptions failed to register"
-       with no other symptom. Reordered below so <labelInfo> precedes <typeInfo>.
+    4. (2026-08-25 dead end, corrected 2026-08-26) At the time this was believed to be an
+       element-ordering problem: propertyDescription's XSD was assumed to be an order-sensitive
+       xs:sequence, so <typeInfo> was moved after <labelInfo>. Re-checked directly against
+       Microsoft's current published XSD (learn.microsoft.com/.../propdesc-schema-entry and
+       .../propdesc-schema-propertydescription): propertyDescription's children are actually inside
+       an xs:all group, which is explicitly ORDER-INDEPENDENT. The reorder was a placebo - harmless,
+       but it was never the real cause of the persistent 0x000401A0.
+    5. Found 2026-08-26, the actual cause of bug 4's symptom: <displayInfo> contained a nested
+       <typeInfo columnState="Default" /> intended to make the column show by default without the
+       user adding it via Explorer's column picker. Checked against Microsoft's published XSD for
+       displayInfo (propdesc-schema-displayinfo): its only valid child elements are stringFormat,
+       booleanFormat, numberFormat, dateTimeFormat, enumeratedList, drawControl, editControl,
+       filterControl, and queryControl - <typeInfo> is not one of them. And typeInfo's own XSD
+       (propdesc-schema-typeinfo) lists "Child Elements: None" and has no "columnState" attribute in
+       any documented version (Vista or Windows 7). This was a fabricated element/attribute pair
+       that doesn't exist in the schema at all, which is exactly what "one or more property
+       descriptions failed to register" describes - removed entirely below. There is no propdesc-level
+       way to force a column to show by default without user action; isViewable="true" below is what
+       makes it available via Explorer's column picker (More...), and that's the correct/only lever.
 -->
 <schema xmlns="http://schemas.microsoft.com/windows/2006/propertydescription" schemaVersion="1.0">
   <propertyDescriptionList publisher="CompanyDlp" product="CompanyDlp Agent">
@@ -46,9 +55,6 @@
            would be indistinguishable in that list, so this name must stay visibly distinct. -->
       <labelInfo label="DLP Classification" />
       <typeInfo type="String" isViewable="true" />
-      <displayInfo>
-        <typeInfo columnState="Default" />
-      </displayInfo>
     </propertyDescription>
   </propertyDescriptionList>
 </schema>
