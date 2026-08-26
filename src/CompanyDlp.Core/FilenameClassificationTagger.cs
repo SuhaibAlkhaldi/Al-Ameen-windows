@@ -18,26 +18,34 @@ namespace CompanyDlp.Core;
 // gets truncated.
 public static class FilenameClassificationTagger
 {
+    // Wire value stays "Internal" (ClassificationTiers.Internal constant unchanged) - only the
+    // displayed tag text changed, per the same explicit request already applied to the Explorer
+    // column/property page (DisplayNames.Classification) and the content watermark
+    // (ContentWatermarker.LabelsByTier): "Internal" is shown to users as "Restricted" everywhere.
     private static readonly Dictionary<string, string> TagsByTier = new(StringComparer.OrdinalIgnoreCase)
     {
         [ClassificationTiers.Public] = "[Public]",
-        [ClassificationTiers.Internal] = "[Internal]",
+        [ClassificationTiers.Internal] = "[Restricted]",
         [ClassificationTiers.Secret] = "[Secret]",
         [ClassificationTiers.VerySecret] = "[Very Secret]",
     };
 
     // Matches a tag this class itself would have written, at the very start of the name only -
-    // so a user's own file that happens to start with a literal "[Internal]" they typed themselves
+    // so a user's own file that happens to start with a literal "[Restricted]" they typed themselves
     // is left alone on every scan after the one time we'd already have tagged it identically anyway.
+    // "Internal" is still recognized here (not just "Restricted") so a file tagged before this
+    // rename gets its stale prefix replaced instead of stacking a second, current-format tag in
+    // front of it.
     private static readonly Regex ExistingTagPrefix =
-        new(@"^\[(Public|Internal|Secret|Very Secret)\]\s+", RegexOptions.Compiled);
+        new(@"^\[(Public|Internal|Restricted|Secret|Very Secret)\]\s+", RegexOptions.Compiled);
 
     // Same tag vocabulary as ExistingTagPrefix, but not anchored to the start of the string - used
     // to recognize a tag anywhere within an arbitrary piece of text (e.g. a print job's title,
     // which some applications suffix with their own name after the document title). Built from the
-    // same TagsByTier values so the two can never drift apart.
+    // same TagsByTier values so the two can never drift apart, plus the legacy "Internal" spelling
+    // for the same backward-compatibility reason as ExistingTagPrefix.
     private static readonly Regex TagAnywhere =
-        new(@"\[(Public|Internal|Secret|Very Secret)\]", RegexOptions.Compiled);
+        new(@"\[(Public|Internal|Restricted|Secret|Very Secret)\]", RegexOptions.Compiled);
 
     // fileName is the name only (Path.GetFileName), never a full path. Returns the file name the
     // file SHOULD have for the given tier - identical to fileName (no rename needed) only if it's
@@ -62,6 +70,18 @@ public static class FilenameClassificationTagger
         if (!match.Success) return false;
 
         var tagLabel = match.Groups[1].Value;
+
+        // Legacy alias: files tagged before the "[Internal]" -> "[Restricted]" rename still carry
+        // the old prefix on disk (retagging only happens when a file is next scanned/changed), so a
+        // print job title built from one of those file names must still resolve to Internal here -
+        // otherwise print enforcement would silently stop recognizing them as sensitive the moment
+        // this rename shipped, for files nobody has touched since.
+        if (tagLabel.Equals("Internal", StringComparison.OrdinalIgnoreCase))
+        {
+            classificationTier = ClassificationTiers.Internal;
+            return true;
+        }
+
         foreach (var (tier, tag) in TagsByTier)
         {
             if (tag.Equals($"[{tagLabel}]", StringComparison.OrdinalIgnoreCase))
