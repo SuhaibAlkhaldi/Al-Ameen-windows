@@ -68,6 +68,21 @@ public sealed class FileInventoryScanner(
         var context = interactiveUserContextProvider.GetActiveConsoleUser();
         var wasBackfillPending = !cache.BackfillCompleted;
 
+        // Root-caused live 2026-08-26 via temporary Warning-level logging: this service runs as
+        // LocalSystem, and Environment.ExpandEnvironmentVariables resolves %USERPROFILE% against the
+        // CURRENT PROCESS's own environment - for LocalSystem that's
+        // C:\Windows\System32\config\systemprofile, not the logged-in employee's C:\Users\<name>.
+        // Every watched folder therefore expanded to a profile with no Desktop/Documents/Downloads at
+        // all; Directory.Exists() was false for all three, every single tick, forever, with zero
+        // error logged anywhere (a nonexistent watched folder is a normal, silently-skipped case, not
+        // a failure) - the background scanner had never actually scanned one real file since this
+        // feature shipped, confirmed by file-classification-status.json's on-disk timestamp not
+        // advancing across an entire day of otherwise-unrelated debugging. Resolved once per tick via
+        // the interactive user's SID (already fetched above via GetActiveConsoleUser for
+        // classification requests anyway) through the ProfileList registry key - the correct,
+        // session-agnostic way for a SYSTEM-account service to find another user's profile folder.
+        var interactiveProfilePath = ResolveInteractiveUserProfilePath(context.UserSid);
+
         // try/finally, not a plain sequential call after the loop: every early `return` below (
         // cancellation mid-walk) must still flush whatever SaveThrottled() left sitting in memory -
         // see FileClassificationStatusStore's throttling comment. Without this, stopping the service
@@ -80,7 +95,7 @@ public sealed class FileInventoryScanner(
             {
                 if (cancellationToken.IsCancellationRequested) return;
 
-                var expanded = Environment.ExpandEnvironmentVariables(folder);
+                var expanded = ExpandWatchedFolderPath(folder, interactiveProfilePath);
                 if (!Directory.Exists(expanded)) continue;
 
                 foreach (var path in EnumerateFilesSafely(expanded))
@@ -95,6 +110,45 @@ public sealed class FileInventoryScanner(
         finally
         {
             statusStore.Flush();
+        }
+    }
+
+    // See TickAsync's comment on interactiveProfilePath for why %USERPROFILE% can't be trusted here.
+    // Only %USERPROFILE% itself gets the interactive-user substitution - any other environment
+    // variable a future WatchedFolders entry might use (rare, but the policy schema allows arbitrary
+    // strings here) still goes through the normal machine/service-account expansion, which is correct
+    // for anything that isn't specifically "this employee's own profile".
+    private static string ExpandWatchedFolderPath(string folder, string? interactiveProfilePath)
+    {
+        const string token = "%USERPROFILE%";
+        if (!string.IsNullOrEmpty(interactiveProfilePath) &&
+            folder.StartsWith(token, StringComparison.OrdinalIgnoreCase))
+        {
+            return interactiveProfilePath + folder[token.Length..];
+        }
+
+        return Environment.ExpandEnvironmentVariables(folder);
+    }
+
+    // HKLM\...\ProfileList\<SID>\ProfileImagePath is the same place Windows Explorer itself resolves
+    // a user's profile directory from - correct regardless of the account's actual folder name (which
+    // doesn't always match the username, e.g. renamed accounts or name collisions get a suffix).
+    // Returns null (not a throw) for "no interactive user right now" (locked/logged-off session) or
+    // "SID not found" - both are legitimate, common states this must degrade out of gracefully rather
+    // than blow up a whole scan tick over.
+    private string? ResolveInteractiveUserProfilePath(string? userSid)
+    {
+        if (string.IsNullOrWhiteSpace(userSid)) return null;
+        try
+        {
+            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
+                $@"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\{userSid}");
+            return key?.GetValue("ProfileImagePath") as string;
+        }
+        catch (Exception exception)
+        {
+            logger.LogDebug(exception, "Could not resolve the interactive user's profile path from SID {Sid}.", userSid);
+            return null;
         }
     }
 
