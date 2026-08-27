@@ -392,7 +392,16 @@ public static class ContentWatermarker
                     cachedHeight = page.Height.Point;
                 }
 
-                using var tileImageStream = new MemoryStream(cachedTilePng);
+                // Not `new MemoryStream(cachedTilePng)` - that overload constructs a
+                // non-"publicly visible" stream (_exposable = false), and PdfSharp's XImage.FromStream
+                // internally calls MemoryStream.GetBuffer() to read the PNG bytes back out. Confirmed
+                // live 2026-08-27: that combination throws "UnauthorizedAccessException: MemoryStream's
+                // internal buffer cannot be accessed" for some real PDFs (a 1029-page scanned textbook)
+                // but not others - GetBuffer() apparently isn't hit on every code path inside
+                // ImportImage, so smaller/simpler images happened to avoid it. The 4-argument
+                // constructor with publiclyVisible: true makes GetBuffer() always succeed, regardless
+                // of which internal path PdfSharp takes.
+                using var tileImageStream = new MemoryStream(cachedTilePng, 0, cachedTilePng.Length, writable: false, publiclyVisible: true);
                 using var tileImage = XImage.FromStream(tileImageStream);
                 gfx.DrawImage(tileImage, 0, 0, page.Width.Point, page.Height.Point);
 
