@@ -7,6 +7,7 @@ using DocumentFormat.OpenXml.Wordprocessing;
 using CompanyDlp.Contracts;
 using Microsoft.Extensions.Logging;
 using PdfSharp.Drawing;
+using PdfSharp.Fonts;
 using PdfSharp.Pdf.IO;
 using P = DocumentFormat.OpenXml.Presentation;
 using X = DocumentFormat.OpenXml.Spreadsheet;
@@ -51,6 +52,52 @@ namespace CompanyDlp.Core;
 // which is also what makes them "match each other" and match the screen watermark, as requested.
 public static class ContentWatermarker
 {
+    // PdfSharp 6.x has no built-in OS font fallback of its own - by default it leans on GDI+
+    // (System.Drawing) font family enumeration, which is a well-known unreliable combination inside
+    // a Windows Service running as LocalSystem with no interactive desktop session (Session 0):
+    // confirmed live 2026-08-27 that XFont(FontFamily, ...) throws "No appropriate font found for
+    // family name 'Segoe UI Semibold'" on some real PDFs but not others in the SAME running service
+    // process - a session/threading-dependent GDI+ flake, not a permanently-missing font (the font
+    // is genuinely installed; a Word-exported PDF processed moments earlier in the same run
+    // embedded it into its own content without issue). Registering this resolver makes font
+    // resolution deterministic: it reads the TTF bytes directly off disk instead of asking GDI+ to
+    // enumerate installed families, so it no longer depends on that flaky path at all. Assigned once
+    // via the static constructor below, before this class's first PDF watermark call.
+    private sealed class WindowsFontResolver : IFontResolver
+    {
+        private const string SegoeUiSemibold = "SegoeUISemibold";
+        private static readonly string FontsDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Fonts);
+
+        public byte[]? GetFont(string faceName)
+        {
+            // "seguisb.ttf" is the actual on-disk file name Windows ships for the "Segoe UI
+            // Semibold" family; falls back to Arial (present on every Windows install) for
+            // anything else, or if that exact file is ever missing/renamed - watermarking must
+            // never throw again just because one specific font file can't be found.
+            var fileName = faceName == SegoeUiSemibold ? "seguisb.ttf" : "arial.ttf";
+            var path = Path.Combine(FontsDirectory, fileName);
+            if (File.Exists(path)) return File.ReadAllBytes(path);
+
+            var arialFallback = Path.Combine(FontsDirectory, "arial.ttf");
+            return File.Exists(arialFallback) ? File.ReadAllBytes(arialFallback) : null;
+        }
+
+        public FontResolverInfo? ResolveTypeface(string familyName, bool isBold, bool isItalic)
+        {
+            // "Segoe UI Semibold" has no separate true-bold face on Windows (seguisb.ttf IS the
+            // semibold weight) - GDI+ previously simulated (emboldened) it when Bold was
+            // requested; MustSimulateBold reproduces that same visual result here.
+            return familyName.Equals("Segoe UI Semibold", StringComparison.OrdinalIgnoreCase)
+                ? new FontResolverInfo(SegoeUiSemibold, isBold, isItalic)
+                : new FontResolverInfo("Arial", isBold, isItalic);
+        }
+    }
+
+    static ContentWatermarker()
+    {
+        GlobalFontSettings.FontResolver = new WindowsFontResolver();
+    }
+
     public static readonly HashSet<string> SupportedExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".txt", ".pdf", ".docx", ".pptx", ".xlsx", ".jpg", ".jpeg", ".png"
