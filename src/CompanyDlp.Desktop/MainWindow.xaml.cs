@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using System.Windows;
@@ -271,6 +272,36 @@ public partial class MainWindow : Window
         UsbStatusText.Text = devices.Count == 0
             ? "No USB bundles were returned yet. Wait for the service scan."
             : string.Join(Environment.NewLine, devices.Select(item => $"{(item.IsAllowed ? "ALLOW" : "BLOCK")}: {item.DisplayName} [{string.Join(',', item.Classes)}]"));
+    }
+
+    // Self-service entry point for ActionKeys.FileWatermarkDisable - there is no "blocked attempt"
+    // moment for this action the way print has (see UserAlertService's requestPermissionUrl), so
+    // the employee opens the dashboard's request form directly instead of reacting to an alert.
+    // Mirrors PrintProtectionMonitor.BuildRequestPermissionUrl's URL shape, minus the fromEvent
+    // correlation id (nothing was blocked here to correlate back to) - the dashboard's manual
+    // request form already handles a bare actionKey with no pre-filled file context, since this is
+    // the exact same flow an employee already goes through to request the live screen watermark be
+    // disabled (ActionKeys.WatermarkDisable, a distinct action - see that constant's comment).
+    private async void RequestFileWatermarkDisable_Click(object sender, RoutedEventArgs e)
+    {
+        if (_policy is null) await RefreshStatusAsync();
+        var portalBaseUrl = _policy?.FileClassification.PortalBaseUrl;
+        if (string.IsNullOrWhiteSpace(portalBaseUrl))
+        {
+            FileWatermarkRequestStatusText.Text = "The admin portal URL is not configured in this policy.";
+            return;
+        }
+
+        var url = $"{portalBaseUrl.TrimEnd('/')}/permission-requests/new?actionKey={Uri.EscapeDataString(ActionKeys.FileWatermarkDisable)}";
+        try
+        {
+            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+            FileWatermarkRequestStatusText.Text = "Opened the admin portal - choose a classification scope and submit your request there.";
+        }
+        catch (Exception exception)
+        {
+            FileWatermarkRequestStatusText.Text = $"Could not open the admin portal: {exception.Message}";
+        }
     }
 
     private async void ReloadPolicy_Click(object sender, RoutedEventArgs e)

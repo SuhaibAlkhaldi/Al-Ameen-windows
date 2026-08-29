@@ -9,8 +9,22 @@ public sealed class PermissionEvaluator(FileClassificationCache? classificationC
     // every print, regardless of tier including Public, requires an explicit grant. Kept as a
     // small opt-out set rather than a policy flag since this is a fixed product decision for this
     // one action, not something meant to be admin-configurable per tenant.
+    // FileWatermarkDisable joins FilePrint here by the same explicit product decision - a request
+    // to hide the file watermark must always go through an approval, even for Public-tier content,
+    // rather than silently auto-allowing Public the way most other actions do (see the fallback
+    // this set opts out of, further down).
     private static readonly HashSet<string> ActionsRequiringGrantEvenForPublic =
-        new(StringComparer.OrdinalIgnoreCase) { ActionKeys.FilePrint };
+        new(StringComparer.OrdinalIgnoreCase) { ActionKeys.FilePrint, ActionKeys.FileWatermarkDisable };
+
+    // Every other tier-scoped grant (print included) uses "this tier and anything less sensitive"
+    // semantics - see MatchesFileScope's comment. FileWatermarkDisable is deliberately different by
+    // explicit product decision: an admin approving "hide the watermark on my Secret files" must
+    // NOT silently also hide it on that employee's Internal/Public files - each tier is opted into
+    // independently. Kept as its own opt-in set (mirroring ActionsRequiringGrantEvenForPublic above)
+    // rather than a per-grant flag, since this is fixed behavior for this one action, not something
+    // meant to vary per tenant/grant.
+    private static readonly HashSet<string> ActionsRequiringExactTierMatch =
+        new(StringComparer.OrdinalIgnoreCase) { ActionKeys.FileWatermarkDisable };
 
     public PermissionDecision Evaluate(
         DlpPolicy policy,
@@ -44,9 +58,9 @@ public sealed class PermissionEvaluator(FileClassificationCache? classificationC
             .Where(grant => grant.ActionKey.Equals(actionKey, StringComparison.OrdinalIgnoreCase))
             .Where(grant => MatchesSubject(grant, context, identity))
             .Where(grant => IsActive(grant, evaluationTimeUtc))
-            .Where(grant => MatchesFileScope(grant, fileHash, fileRank))
+            .Where(grant => MatchesFileScope(grant, fileHash, fileRank, ActionsRequiringExactTierMatch.Contains(actionKey)))
             .OrderByDescending(grant => IsEmergencyDeny(grant))
-            .ThenByDescending(grant => FileScopeSpecificity(grant, fileHash, fileRank))
+            .ThenByDescending(grant => FileScopeSpecificity(grant, fileHash, fileRank, ActionsRequiringExactTierMatch.Contains(actionKey)))
             .ThenByDescending(grant => grant.Priority)
             .ThenByDescending(grant => SubjectSpecificity(grant.SubjectType))
             .ThenByDescending(grant => grant.CreatedAtUtc)
@@ -152,7 +166,7 @@ public sealed class PermissionEvaluator(FileClassificationCache? classificationC
     // least a known tier (tier-scoped grants only; an exact-file grant can never match without a
     // real hash to compare against, even if the tier happens to be known some other way) - it must
     // never leak into evaluating some unrelated action or a different file.
-    private static bool MatchesFileScope(PermissionGrant grant, string? fileHash, int? fileRank)
+    private static bool MatchesFileScope(PermissionGrant grant, string? fileHash, int? fileRank, bool requireExactTierMatch = false)
     {
         if (grant.FileHash is null && grant.ClassificationTier is null) return true;
         if (fileHash is null && fileRank is null) return false;
@@ -160,12 +174,17 @@ public sealed class PermissionEvaluator(FileClassificationCache? classificationC
         if (grant.FileHash is not null)
             return fileHash is not null && grant.FileHash.Equals(fileHash, StringComparison.OrdinalIgnoreCase);
 
-        // ClassificationTier-scoped: covers this file if the file's own rank is at or below the
-        // granted tier's rank (a "Secret" grant also covers Public/Internal files, not the reverse).
-        return fileRank is not null && fileRank.Value <= ClassificationTiers.RankOf(grant.ClassificationTier!);
+        // ClassificationTier-scoped: by default covers this file if the file's own rank is at or
+        // below the granted tier's rank (a "Secret" grant also covers Public/Internal files, not
+        // the reverse) - this is print's behavior and the default for every other action. Actions in
+        // ActionsRequiringExactTierMatch (see that field's comment) opt out of the "and below" widening
+        // - a "Secret" grant for those actions covers Secret files only, never Internal/Public.
+        return fileRank is not null && (requireExactTierMatch
+            ? fileRank.Value == ClassificationTiers.RankOf(grant.ClassificationTier!)
+            : fileRank.Value <= ClassificationTiers.RankOf(grant.ClassificationTier!));
     }
 
-    private static int FileScopeSpecificity(PermissionGrant grant, string? fileHash, int? fileRank)
+    private static int FileScopeSpecificity(PermissionGrant grant, string? fileHash, int? fileRank, bool requireExactTierMatch = false)
     {
         if (fileHash is null && fileRank is null) return 0;
         if (grant.FileHash is not null) return 2;

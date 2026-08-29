@@ -165,7 +165,9 @@ public static class ContentWatermarker
         DateTimeOffset lastScannedUtc,
         ClientContext context,
         WatermarkPolicy watermarkPolicy,
-        ILogger logger)
+        ILogger logger,
+        bool includeTileLayer = true,
+        bool forceReapply = false)
     {
         if (!LabelsByTier.TryGetValue(classificationTier, out var label)) return false;
         if (!ColorsByTier.TryGetValue(classificationTier, out var color)) return false;
@@ -181,11 +183,11 @@ public static class ContentWatermarker
             switch (extension.ToLowerInvariant())
             {
                 case ".txt": WatermarkTxt(filePath, lines, lastScannedUtc); return true;
-                case ".pdf": WatermarkPdf(filePath, lines, tileText, color, visuals); return true;
-                case ".docx": WatermarkDocx(filePath, lines, tileText, color, visuals); return true;
-                case ".pptx": WatermarkPptx(filePath, lines, tileText, color, visuals); return true;
-                case ".xlsx": WatermarkXlsx(filePath, lines, tileText, color, visuals); return true;
-                case ".jpg" or ".jpeg" or ".png": WatermarkImage(filePath, lines, tileText, color, visuals); return true;
+                case ".pdf": WatermarkPdf(filePath, lines, tileText, color, visuals, includeTileLayer, forceReapply); return true;
+                case ".docx": WatermarkDocx(filePath, lines, tileText, color, visuals, includeTileLayer); return true;
+                case ".pptx": WatermarkPptx(filePath, lines, tileText, color, visuals, includeTileLayer); return true;
+                case ".xlsx": WatermarkXlsx(filePath, lines, tileText, color, visuals, includeTileLayer); return true;
+                case ".jpg" or ".jpeg" or ".png": WatermarkImage(filePath, lines, tileText, color, visuals, includeTileLayer); return true;
                 default: return false;
             }
         }
@@ -194,6 +196,37 @@ public static class ContentWatermarker
             logger.LogWarning(exception, "Could not apply a content watermark to {Path}; leaving its content unchanged.", filePath);
             return false;
         }
+    }
+
+    // Strips just the tiled/repeating layer from a file that was previously watermarked with both
+    // layers, leaving the small corner info block (Classification/Device) untouched - the effect
+    // ActionKeys.FileWatermarkDisable grants. For Word/PowerPoint/Excel this is a clean, lossless
+    // operation (the tile is stored as a distinct, independently-removable embedded picture - see
+    // each format's Watermark* method). For PDF/images this method must NOT be called directly:
+    // both layers are baked into one flattened surface with no way to separate them after the fact
+    // (see the class-level comment) - those two formats can only reach "corner only" by restoring an
+    // escrowed corner-only copy captured at first-watermark time (see WatermarkEscrowStore), never by
+    // editing the live file in place. Callers (FileInventoryScanner) must route PDF/image files
+    // through that escrow-restore path instead of this method.
+    public static bool RemoveTileLayer(
+        string filePath,
+        string classificationTier,
+        DateTimeOffset lastScannedUtc,
+        ClientContext context,
+        WatermarkPolicy watermarkPolicy,
+        ILogger logger)
+    {
+        var extension = Path.GetExtension(filePath);
+        if (extension.Equals(".pdf", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".jpg", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".jpeg", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".png", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"{extension} cannot have its tile layer removed in place - route it through the escrow restore path instead.");
+        }
+
+        return ApplyWatermark(filePath, classificationTier, lastScannedUtc, context, watermarkPolicy, logger, includeTileLayer: false);
     }
 
     // Device name, not "Status: Up to Date" - Status was dropped because a document already
@@ -361,13 +394,18 @@ public static class ContentWatermarker
     // that get re-watermarked after their tier already changed once; a PDF watermarked for the
     // first time only ever gets one clean pass. PdfPig (this project's other PDF dependency, used
     // by DocumentTextExtractor) is read-only and cannot write, hence PdfSharp here.
-    private static void WatermarkPdf(string filePath, string[] lines, string tileText, (byte R, byte G, byte B) color, TileVisuals visuals)
+    private static void WatermarkPdf(string filePath, string[] lines, string tileText, (byte R, byte G, byte B) color, TileVisuals visuals, bool includeTileLayer = true, bool forceReapply = false)
     {
         // The scanner only calls this when a file is genuinely new or changed (see
         // FileInventoryScanner's persisted-hash check) - but that check can't see a stale scan
         // left over from before it existed, so this stays as a defense-in-depth check: skip the
-        // rewrite entirely when the current watermark already matches.
-        if (AlreadyHasCurrentPdfWatermark(filePath, lines)) return;
+        // rewrite entirely when the current watermark already matches. This check only looks at the
+        // corner text, so it cannot tell "corner+tile" apart from "corner only" - forceReapply is
+        // how FileInventoryScanner bypasses it specifically when re-adding the tile layer after a
+        // FileWatermarkDisable grant expires on a PDF that's currently sitting in escrow-restored
+        // (corner-only) state, where the corner text already matches but the tile must still be
+        // (re)drawn.
+        if (!forceReapply && AlreadyHasCurrentPdfWatermark(filePath, lines)) return;
 
         var temporary = filePath + ".tmp";
         using (var document = PdfReader.Open(filePath, PdfDocumentOpenMode.Modify))
@@ -385,25 +423,28 @@ public static class ContentWatermarker
             {
                 using var gfx = XGraphics.FromPdfPage(page);
 
-                if (cachedTilePng is null || cachedWidth != page.Width.Point || cachedHeight != page.Height.Point)
+                if (includeTileLayer)
                 {
-                    cachedTilePng = BuildTileLayerPng(page.Width.Point, page.Height.Point, tileText, color, visuals);
-                    cachedWidth = page.Width.Point;
-                    cachedHeight = page.Height.Point;
-                }
+                    if (cachedTilePng is null || cachedWidth != page.Width.Point || cachedHeight != page.Height.Point)
+                    {
+                        cachedTilePng = BuildTileLayerPng(page.Width.Point, page.Height.Point, tileText, color, visuals);
+                        cachedWidth = page.Width.Point;
+                        cachedHeight = page.Height.Point;
+                    }
 
-                // Not `new MemoryStream(cachedTilePng)` - that overload constructs a
-                // non-"publicly visible" stream (_exposable = false), and PdfSharp's XImage.FromStream
-                // internally calls MemoryStream.GetBuffer() to read the PNG bytes back out. Confirmed
-                // live 2026-08-27: that combination throws "UnauthorizedAccessException: MemoryStream's
-                // internal buffer cannot be accessed" for some real PDFs (a 1029-page scanned textbook)
-                // but not others - GetBuffer() apparently isn't hit on every code path inside
-                // ImportImage, so smaller/simpler images happened to avoid it. The 4-argument
-                // constructor with publiclyVisible: true makes GetBuffer() always succeed, regardless
-                // of which internal path PdfSharp takes.
-                using var tileImageStream = new MemoryStream(cachedTilePng, 0, cachedTilePng.Length, writable: false, publiclyVisible: true);
-                using var tileImage = XImage.FromStream(tileImageStream);
-                gfx.DrawImage(tileImage, 0, 0, page.Width.Point, page.Height.Point);
+                    // Not `new MemoryStream(cachedTilePng)` - that overload constructs a
+                    // non-"publicly visible" stream (_exposable = false), and PdfSharp's XImage.FromStream
+                    // internally calls MemoryStream.GetBuffer() to read the PNG bytes back out. Confirmed
+                    // live 2026-08-27: that combination throws "UnauthorizedAccessException: MemoryStream's
+                    // internal buffer cannot be accessed" for some real PDFs (a 1029-page scanned textbook)
+                    // but not others - GetBuffer() apparently isn't hit on every code path inside
+                    // ImportImage, so smaller/simpler images happened to avoid it. The 4-argument
+                    // constructor with publiclyVisible: true makes GetBuffer() always succeed, regardless
+                    // of which internal path PdfSharp takes.
+                    using var tileImageStream = new MemoryStream(cachedTilePng, 0, cachedTilePng.Length, writable: false, publiclyVisible: true);
+                    using var tileImage = XImage.FromStream(tileImageStream);
+                    gfx.DrawImage(tileImage, 0, 0, page.Width.Point, page.Height.Point);
+                }
 
                 const double margin = 18;
                 const double lineHeight = 12;
@@ -464,7 +505,7 @@ public static class ContentWatermarker
     // rendering risk - see the class-level comment for the full reasoning. Detects a
     // previously-added header via a marker comment so reclassification replaces the header (and
     // reuses/overwrites its one image part) in place instead of stacking.
-    private static void WatermarkDocx(string filePath, string[] lines, string tileText, (byte R, byte G, byte B) color, TileVisuals visuals)
+    private static void WatermarkDocx(string filePath, string[] lines, string tileText, (byte R, byte G, byte B) color, TileVisuals visuals, bool includeTileLayer = true)
     {
         var temporary = filePath + ".tmp";
         File.Copy(filePath, temporary, true);
@@ -478,20 +519,36 @@ public static class ContentWatermarker
                     throw new InvalidOperationException("Not a valid Word document body.");
 
                 var (pageWidthEmu, pageHeightEmu) = GetDocxPageSizeEmu(body);
-                var tilePng = BuildTileLayerPng(pageWidthEmu / 12700.0, pageHeightEmu / 12700.0, tileText, color, visuals);
 
                 var existingHeaderPart = mainPart.HeaderParts.FirstOrDefault(HeaderContainsOurMarker);
                 var headerPart = existingHeaderPart ?? mainPart.AddNewPart<HeaderPart>();
 
-                // Reuse the header's existing image part (if this is a reclassification) instead
-                // of adding a second one every time - same "detect and replace in place, don't
-                // accumulate" contract as every other format below.
-                var imagePart = headerPart.ImageParts.FirstOrDefault() ?? headerPart.AddImagePart(ImagePartType.Png);
-                using (var imageStream = imagePart.GetStream(FileMode.Create, FileAccess.Write))
+                string? imageRelId = null;
+                if (includeTileLayer)
                 {
-                    imageStream.Write(tilePng, 0, tilePng.Length);
+                    var tilePng = BuildTileLayerPng(pageWidthEmu / 12700.0, pageHeightEmu / 12700.0, tileText, color, visuals);
+
+                    // Reuse the header's existing image part (if this is a reclassification) instead
+                    // of adding a second one every time - same "detect and replace in place, don't
+                    // accumulate" contract as every other format below.
+                    var imagePart = headerPart.ImageParts.FirstOrDefault() ?? headerPart.AddImagePart(ImagePartType.Png);
+                    using (var imageStream = imagePart.GetStream(FileMode.Create, FileAccess.Write))
+                    {
+                        imageStream.Write(tilePng, 0, tilePng.Length);
+                    }
+                    imageRelId = headerPart.GetIdOfPart(imagePart);
                 }
-                var imageRelId = headerPart.GetIdOfPart(imagePart);
+                else
+                {
+                    // A FileWatermarkDisable grant is active for this file - strip any existing tile
+                    // image part entirely (not just skip adding a new one) so a previously-tiled
+                    // document actually loses the picture, rather than the header XML below just no
+                    // longer referencing an orphaned-but-still-present image part.
+                    foreach (var orphanedImagePart in headerPart.ImageParts.ToList())
+                    {
+                        headerPart.DeletePart(orphanedImagePart);
+                    }
+                }
 
                 using (var writer = new StreamWriter(headerPart.GetStream(FileMode.Create, FileAccess.Write)))
                 {
@@ -566,7 +623,7 @@ public static class ContentWatermarker
         return ((long)widthTwips * 635, (long)heightTwips * 635);
     }
 
-    private static string BuildDocxWatermarkHeaderXml(string[] lines, (byte R, byte G, byte B) color, string imageRelId, long pageWidthEmu, long pageHeightEmu)
+    private static string BuildDocxWatermarkHeaderXml(string[] lines, (byte R, byte G, byte B) color, string? imageRelId, long pageWidthEmu, long pageHeightEmu)
     {
         // The true, fully-saturated tier color, not a lightened tint - a plain corner marker like
         // this never sits over body content, so there's no readability reason to soften it.
@@ -597,7 +654,7 @@ public static class ContentWatermarker
                xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
         <!--CompanyDlpWatermark-->
         {{paragraphs}}
-        {{BuildDocxTileWatermarkPictureXml(imageRelId, pageWidthEmu, pageHeightEmu)}}
+        {{(imageRelId is null ? "" : BuildDocxTileWatermarkPictureXml(imageRelId, pageWidthEmu, pageHeightEmu))}}
         </w:hdr>
         """;
     }
@@ -646,7 +703,7 @@ public static class ContentWatermarker
     // shared tile-layer PNG (see BuildTileLayerPng) embedded as a plain picture covering the whole
     // slide, behind everything else. Detects and replaces a previous watermark shape/picture (and
     // its image part) by name, so reclassification does not stack or leave orphaned media parts.
-    private static void WatermarkPptx(string filePath, string[] lines, string tileText, (byte R, byte G, byte B) color, TileVisuals visuals)
+    private static void WatermarkPptx(string filePath, string[] lines, string tileText, (byte R, byte G, byte B) color, TileVisuals visuals, bool includeTileLayer = true)
     {
         var temporary = filePath + ".tmp";
         File.Copy(filePath, temporary, true);
@@ -659,26 +716,32 @@ public static class ContentWatermarker
                 var slideSize = presentationPart.Presentation.SlideSize;
                 var slideWidth = slideSize?.Cx?.Value ?? 9144000L;
                 var slideHeight = slideSize?.Cy?.Value ?? 6858000L;
-                var tilePng = BuildTileLayerPng(slideWidth / 12700.0, slideHeight / 12700.0, tileText, color, visuals);
+                var tilePng = includeTileLayer ? BuildTileLayerPng(slideWidth / 12700.0, slideHeight / 12700.0, tileText, color, visuals) : null;
 
                 foreach (var slidePart in presentationPart.SlideParts)
                 {
                     var shapeTree = slidePart.Slide?.CommonSlideData?.ShapeTree;
                     if (shapeTree is null) continue;
 
+                    // Unconditional - strips any existing tile picture (and its image part) whether
+                    // or not a fresh one is about to be added back below, so a FileWatermarkDisable
+                    // grant actually removes it rather than leaving a stale one on disk.
                     RemovePptxTileWatermark(slidePart, shapeTree);
                     shapeTree.Elements<P.Shape>().FirstOrDefault(IsOurWatermarkShape)?.Remove();
 
-                    var imagePart = slidePart.AddImagePart(ImagePartType.Png);
-                    using (var imageStream = imagePart.GetStream(FileMode.Create, FileAccess.Write))
+                    if (tilePng is not null)
                     {
-                        imageStream.Write(tilePng, 0, tilePng.Length);
-                    }
-                    var imageRelId = slidePart.GetIdOfPart(imagePart);
+                        var imagePart = slidePart.AddImagePart(ImagePartType.Png);
+                        using (var imageStream = imagePart.GetStream(FileMode.Create, FileAccess.Write))
+                        {
+                            imageStream.Write(tilePng, 0, tilePng.Length);
+                        }
+                        var imageRelId = slidePart.GetIdOfPart(imagePart);
 
-                    // Tile picture first (sits behind, since later shapes render on top of earlier
-                    // ones in DrawingML's z-order), then the single readable corner block on top.
-                    shapeTree.AppendChild(new P.Picture(BuildPptxTileWatermarkPictureXml(imageRelId, slideWidth, slideHeight)));
+                        // Tile picture first (sits behind, since later shapes render on top of earlier
+                        // ones in DrawingML's z-order), then the single readable corner block on top.
+                        shapeTree.AppendChild(new P.Picture(BuildPptxTileWatermarkPictureXml(imageRelId, slideWidth, slideHeight)));
+                    }
                     shapeTree.AppendChild(new P.Shape(BuildPptxWatermarkShapeXml(lines, color, slideWidth, slideHeight)));
                     slidePart.Slide!.Save();
                 }
@@ -798,7 +861,7 @@ public static class ContentWatermarker
     private const double XlsxTileWidthPoints = 960;  // ~20 default-width columns
     private const double XlsxTileHeightPoints = 900; // ~60 default-height rows
 
-    private static void WatermarkXlsx(string filePath, string[] lines, string tileText, (byte R, byte G, byte B) color, TileVisuals visuals)
+    private static void WatermarkXlsx(string filePath, string[] lines, string tileText, (byte R, byte G, byte B) color, TileVisuals visuals, bool includeTileLayer = true)
     {
         var temporary = filePath + ".tmp";
         File.Copy(filePath, temporary, true);
@@ -808,7 +871,7 @@ public static class ContentWatermarker
             {
                 var workbookPart = document.WorkbookPart
                     ?? throw new InvalidOperationException("Not a valid Excel workbook.");
-                var tilePng = BuildTileLayerPng(XlsxTileWidthPoints, XlsxTileHeightPoints, tileText, color, visuals);
+                var tilePng = includeTileLayer ? BuildTileLayerPng(XlsxTileWidthPoints, XlsxTileHeightPoints, tileText, color, visuals) : null;
 
                 foreach (var worksheetPart in workbookPart.WorksheetParts)
                 {
@@ -823,7 +886,7 @@ public static class ContentWatermarker
         }
     }
 
-    private static void ApplyXlsxWorksheetWatermark(WorksheetPart worksheetPart, string[] lines, byte[] tilePng, (byte R, byte G, byte B) color, TileVisuals visuals)
+    private static void ApplyXlsxWorksheetWatermark(WorksheetPart worksheetPart, string[] lines, byte[]? tilePng, (byte R, byte G, byte B) color, TileVisuals visuals)
     {
         var drawingsPart = worksheetPart.DrawingsPart;
         Xdr.WorksheetDrawing worksheetDrawing;
@@ -857,14 +920,16 @@ public static class ContentWatermarker
             }
         }
 
-        var imagePart = drawingsPart.AddImagePart(ImagePartType.Png);
-        using (var imageStream = imagePart.GetStream(FileMode.Create, FileAccess.Write))
+        if (tilePng is not null)
         {
-            imageStream.Write(tilePng, 0, tilePng.Length);
+            var imagePart = drawingsPart.AddImagePart(ImagePartType.Png);
+            using (var imageStream = imagePart.GetStream(FileMode.Create, FileAccess.Write))
+            {
+                imageStream.Write(tilePng, 0, tilePng.Length);
+            }
+            var imageRelId = drawingsPart.GetIdOfPart(imagePart);
+            worksheetDrawing.Append(BuildXlsxTileAnchor(imageRelId));
         }
-        var imageRelId = drawingsPart.GetIdOfPart(imagePart);
-
-        worksheetDrawing.Append(BuildXlsxTileAnchor(imageRelId));
         worksheetDrawing.Append(BuildXlsxCornerAnchor(lines, color));
 
         // Explicit Save() on both modified part roots - matches WatermarkPptx's
@@ -968,7 +1033,7 @@ public static class ContentWatermarker
     // on RECLASSIFICATION the previous pass's corner text is not erased - the new text is drawn on
     // top of it and both remain visible/overlap. A file watermarked for the first time only ever
     // gets one clean pass.
-    private static void WatermarkImage(string filePath, string[] lines, string tileText, (byte R, byte G, byte B) color, TileVisuals visuals)
+    private static void WatermarkImage(string filePath, string[] lines, string tileText, (byte R, byte G, byte B) color, TileVisuals visuals, bool includeTileLayer = true)
     {
         var temporary = filePath + ".tmp";
         using (var original = new Bitmap(filePath))
@@ -983,7 +1048,7 @@ public static class ContentWatermarker
                 // pixelsPerPoint = 1: an image has no physical "points" unit, so treat the policy's
                 // spacing/font numbers as pixels directly - the same 1:1 treatment this method used
                 // before this layer was unified with the other formats.
-                DrawTileLayer(graphics, original.Width, original.Height, 1.0, tileText, color, visuals);
+                if (includeTileLayer) DrawTileLayer(graphics, original.Width, original.Height, 1.0, tileText, color, visuals);
 
                 var fontSize = Math.Max(8f, Math.Min(original.Width, original.Height) / 26f);
                 using var font = new System.Drawing.Font(FontFamily, fontSize, System.Drawing.FontStyle.Bold);

@@ -68,6 +68,13 @@
             <TextBlock Text="Screenshot and watermark" FontSize="18" FontWeight="SemiBold"/>
             <TextBlock x:Name="ScreenStatusText" Text="Stopped" Foreground="#94A3B8" Margin="0,8,0,0" TextWrapping="Wrap"/>
             <TextBlock x:Name="WatermarkStatusText" Text="Stopped" Foreground="#94A3B8" Margin="0,6,0,0" TextWrapping="Wrap"/>
+            <!-- Distinct from the live on-screen overlay above - opens the dashboard's request
+                 flow for ActionKeys.FileWatermarkDisable, which governs the tiled watermark stamped
+                 into a file's own content (see FileInventoryScanner/WatermarkEscrowStore). There is
+                 no "blocked attempt" moment to react to the way print has, so this is a plain
+                 self-service button rather than something triggered by an alert. -->
+            <Button x:Name="RequestFileWatermarkDisableButton" Content="Request to hide the file watermark" Margin="0,10,0,0" Click="RequestFileWatermarkDisable_Click"/>
+            <TextBlock x:Name="FileWatermarkRequestStatusText" Foreground="#94A3B8" Margin="0,6,0,0" TextWrapping="Wrap"/>
           </StackPanel>
         </Border>
 

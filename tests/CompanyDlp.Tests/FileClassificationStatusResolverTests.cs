@@ -45,25 +45,32 @@ public sealed class FileClassificationStatusResolverTests : IDisposable
         // IsScanning() (the only scanner member the resolver calls) only reads an in-memory
         // ConcurrentDictionary never touched by these constructor args, so passing null for the
         // dependencies unused by that path is safe - same reasoning PipeServerTests already
-        // documents for its own null dependencies.
+        // documents for its own null dependencies. Includes PermissionEvaluator/AgentIdentityProvider/
+        // WatermarkEscrowStore (added for ActionKeys.FileWatermarkDisable's grant re-check) for the
+        // same reason - IsScanning() never touches them either.
         var scanner = new FileInventoryScanner(
             classificationService: null!,
             cache,
             statusStore,
             dictionaryRuleStore: null!,
             interactiveUserContextProvider: null!,
+            permissionEvaluator: null!,
+            identityProvider: null!,
+            escrowStore: null!,
             NullLogger<FileInventoryScanner>.Instance);
 
-        return (new FileClassificationStatusResolver(statusStore, cache, scanner), statusStore, cache);
+        // engine/encryptedFileHashStore are only touched by ResolveEncryptedAsync's .dlpenc branch -
+        // every test below exercises the ordinary (non-.dlpenc) path only, so null is safe here too.
+        return (new FileClassificationStatusResolver(statusStore, cache, scanner, engine: null!, encryptedFileHashStore: null!), statusStore, cache);
     }
 
     [Fact]
-    public void Resolve_PathNeverSeen_ReturnsNotScanned()
+    public async Task Resolve_PathNeverSeen_ReturnsNotScanned()
     {
         var (resolver, _, _) = CreateResolver();
         var path = Path.Combine(_policyDirectory, "never-seen.txt");
 
-        var result = resolver.Resolve(path);
+        var result = await resolver.ResolveAsync(path);
 
         Assert.Equal(FileClassificationStatuses.NotScanned, result.Status);
         Assert.Equal("Unclassified", result.Classification);
@@ -71,7 +78,7 @@ public sealed class FileClassificationStatusResolverTests : IDisposable
     }
 
     [Fact]
-    public void Resolve_UpToDateWithCachedHash_ReturnsRealClassification()
+    public async Task Resolve_UpToDateWithCachedHash_ReturnsRealClassification()
     {
         var (resolver, statusStore, cache) = CreateResolver();
         var path = Path.Combine(_policyDirectory, "secret.docx");
@@ -81,7 +88,7 @@ public sealed class FileClassificationStatusResolverTests : IDisposable
         cache.Set(new CachedFileClassification("hash-abc", "Very_Secret", "RealAiVerdict", scannedAt, RulesVersion: 1));
         statusStore.Set(new FileClassificationStatusEntry(normalized, FileClassificationStatuses.UpToDate, "hash-abc", scannedAt, "RealAiVerdict", scannedAt));
 
-        var result = resolver.Resolve(path);
+        var result = await resolver.ResolveAsync(path);
 
         Assert.Equal(FileClassificationStatuses.UpToDate, result.Status);
         Assert.Equal("Very_Secret", result.Classification);
@@ -89,7 +96,7 @@ public sealed class FileClassificationStatusResolverTests : IDisposable
     }
 
     [Fact]
-    public void Resolve_FailedStatus_NeverShowsAStaleClassification()
+    public async Task Resolve_FailedStatus_NeverShowsAStaleClassification()
     {
         // Guards the resolver's core safety rule (see FileClassificationStatusResolver.cs): even
         // when a cache entry still exists for the last-known hash, a non-UpToDate status must
@@ -102,14 +109,14 @@ public sealed class FileClassificationStatusResolverTests : IDisposable
         cache.Set(new CachedFileClassification("hash-def", "Public", "RealAiVerdict", scannedAt, RulesVersion: 1));
         statusStore.Set(new FileClassificationStatusEntry(normalized, FileClassificationStatuses.Failed, "hash-def", scannedAt, "AiApiTransientError", scannedAt));
 
-        var result = resolver.Resolve(path);
+        var result = await resolver.ResolveAsync(path);
 
         Assert.Equal(FileClassificationStatuses.Failed, result.Status);
         Assert.Equal("Unclassified", result.Classification);
     }
 
     [Fact]
-    public void Resolve_UpToDateButCacheEntryMissing_FallsBackToUnclassified()
+    public async Task Resolve_UpToDateButCacheEntryMissing_FallsBackToUnclassified()
     {
         var (resolver, statusStore, _) = CreateResolver();
         var path = Path.Combine(_policyDirectory, "orphaned-hash.txt");
@@ -118,7 +125,7 @@ public sealed class FileClassificationStatusResolverTests : IDisposable
 
         statusStore.Set(new FileClassificationStatusEntry(normalized, FileClassificationStatuses.UpToDate, "hash-not-in-cache", scannedAt, "RealAiVerdict", scannedAt));
 
-        var result = resolver.Resolve(path);
+        var result = await resolver.ResolveAsync(path);
 
         Assert.Equal(FileClassificationStatuses.UpToDate, result.Status);
         Assert.Equal("Unclassified", result.Classification);
