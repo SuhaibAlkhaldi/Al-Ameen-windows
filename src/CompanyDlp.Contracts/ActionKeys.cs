@@ -23,11 +23,11 @@ public static class ActionKeys
 
     // Distinct from WatermarkDisable above (which only ever governs the live on-screen overlay -
     // see MainWindow.xaml.cs's RefreshWatermarkGrantAsync/WatermarkManager). This one governs the
-    // tiled/repeating watermark stamped into a file's own content (ContentWatermarker's "tile
-    // layer") - a separate concept with its own request/approval flow, since there is no "blocked
-    // attempt" moment to react to the way print has; the employee self-initiates this from the
-    // Desktop app's Watermark section. The small corner info block (Classification/Device) is
-    // deliberately NOT covered by this action - only the tiled layer is ever hidden.
+    // watermark stamped into a file's own content (ContentWatermarker) - a separate concept with
+    // its own request/approval flow, since there is no "blocked attempt" moment to react to the way
+    // print has; the employee self-initiates this from the Desktop app's Watermark section. Covers
+    // BOTH of ContentWatermarker's layers: the tiled/repeating background AND the small corner info
+    // block (Classification/Device) - a grant for a tier hides both, a revoke restores both.
     public const string FileWatermarkDisable = "file.watermark-disable";
 
     // CliExecute: presence/allow-deny channel - can this user launch cmd.exe/powershell.exe/

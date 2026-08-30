@@ -167,6 +167,7 @@ public static class ContentWatermarker
         WatermarkPolicy watermarkPolicy,
         ILogger logger,
         bool includeTileLayer = true,
+        bool includeCornerLayer = true,
         bool forceReapply = false)
     {
         if (!LabelsByTier.TryGetValue(classificationTier, out var label)) return false;
@@ -182,12 +183,12 @@ public static class ContentWatermarker
         {
             switch (extension.ToLowerInvariant())
             {
-                case ".txt": WatermarkTxt(filePath, lines, lastScannedUtc); return true;
-                case ".pdf": WatermarkPdf(filePath, lines, tileText, color, visuals, includeTileLayer, forceReapply); return true;
-                case ".docx": WatermarkDocx(filePath, lines, tileText, color, visuals, includeTileLayer); return true;
-                case ".pptx": WatermarkPptx(filePath, lines, tileText, color, visuals, includeTileLayer); return true;
-                case ".xlsx": WatermarkXlsx(filePath, lines, tileText, color, visuals, includeTileLayer); return true;
-                case ".jpg" or ".jpeg" or ".png": WatermarkImage(filePath, lines, tileText, color, visuals, includeTileLayer); return true;
+                case ".txt": WatermarkTxt(filePath, lines, lastScannedUtc, includeCornerLayer); return true;
+                case ".pdf": WatermarkPdf(filePath, lines, tileText, color, visuals, includeTileLayer, includeCornerLayer, forceReapply); return true;
+                case ".docx": WatermarkDocx(filePath, lines, tileText, color, visuals, includeTileLayer, includeCornerLayer); return true;
+                case ".pptx": WatermarkPptx(filePath, lines, tileText, color, visuals, includeTileLayer, includeCornerLayer); return true;
+                case ".xlsx": WatermarkXlsx(filePath, lines, tileText, color, visuals, includeTileLayer, includeCornerLayer); return true;
+                case ".jpg" or ".jpeg" or ".png": WatermarkImage(filePath, lines, tileText, color, visuals, includeTileLayer, includeCornerLayer); return true;
                 default: return false;
             }
         }
@@ -198,23 +199,29 @@ public static class ContentWatermarker
         }
     }
 
-    // Strips just the tiled/repeating layer from a file that was previously watermarked with both
-    // layers, leaving the small corner info block (Classification/Device) untouched - the effect
-    // ActionKeys.FileWatermarkDisable grants. For Word/PowerPoint/Excel this is a clean, lossless
-    // operation (the tile is stored as a distinct, independently-removable embedded picture - see
-    // each format's Watermark* method). For PDF/images this method must NOT be called directly:
-    // both layers are baked into one flattened surface with no way to separate them after the fact
-    // (see the class-level comment) - those two formats can only reach "corner only" by restoring an
-    // escrowed corner-only copy captured at first-watermark time (see WatermarkEscrowStore), never by
-    // editing the live file in place. Callers (FileInventoryScanner) must route PDF/image files
-    // through that escrow-restore path instead of this method.
-    public static bool RemoveTileLayer(
+    // Strips the requested layer(s) from a file that was previously watermarked, per
+    // ActionKeys.FileWatermarkDisable's grant scope: hides BOTH the tiled/repeating layer AND the
+    // small corner info block (Classification/Device) for the granted tier - there is no product
+    // requirement anywhere for a "tile hidden, corner still shown" in-between state, so callers
+    // always pass matching values for hideTile/hideCorner in practice, but the two stay independent
+    // parameters here since ApplyWatermark already supports that generality cheaply. For
+    // Word/PowerPoint/Excel this is a clean, lossless operation (both layers are stored as distinct,
+    // independently-removable embedded objects - see each format's Watermark* method). For
+    // PDF/images this method must NOT be called directly: both layers are baked into one flattened
+    // surface with no way to separate them after the fact (see the class-level comment) - those two
+    // formats can only reach a "layer(s) hidden" state by restoring a pristine escrowed copy
+    // captured at first-watermark time (see WatermarkEscrowStore), never by editing the live file in
+    // place. Callers (FileInventoryScanner) must route PDF/image files through that escrow-restore
+    // path instead of this method.
+    public static bool RemoveWatermarkLayers(
         string filePath,
         string classificationTier,
         DateTimeOffset lastScannedUtc,
         ClientContext context,
         WatermarkPolicy watermarkPolicy,
-        ILogger logger)
+        ILogger logger,
+        bool hideTile = true,
+        bool hideCorner = true)
     {
         var extension = Path.GetExtension(filePath);
         if (extension.Equals(".pdf", StringComparison.OrdinalIgnoreCase)
@@ -223,10 +230,11 @@ public static class ContentWatermarker
             || extension.Equals(".png", StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException(
-                $"{extension} cannot have its tile layer removed in place - route it through the escrow restore path instead.");
+                $"{extension} cannot have its watermark layers removed in place - route it through the escrow restore path instead.");
         }
 
-        return ApplyWatermark(filePath, classificationTier, lastScannedUtc, context, watermarkPolicy, logger, includeTileLayer: false);
+        return ApplyWatermark(filePath, classificationTier, lastScannedUtc, context, watermarkPolicy, logger,
+            includeTileLayer: !hideTile, includeCornerLayer: !hideCorner);
     }
 
     // Device name, not "Status: Up to Date" - Status was dropped because a document already
@@ -359,7 +367,7 @@ public static class ContentWatermarker
         @"\AClassification: .*\r?\nDevice: .*\r?\nLast Scanned: .*\r?\n\r?\n",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-    private static void WatermarkTxt(string filePath, string[] lines, DateTimeOffset lastScannedUtc)
+    private static void WatermarkTxt(string filePath, string[] lines, DateTimeOffset lastScannedUtc, bool includeCornerLayer = true)
     {
         var original = File.ReadAllText(filePath);
 
@@ -372,10 +380,20 @@ public static class ContentWatermarker
             stripped = TxtMarkerBlock.Replace(stripped, string.Empty, 1);
         }
 
-        var allLines = lines.Append($"Last Scanned: {lastScannedUtc.ToLocalTime():yyyy-MM-dd HH:mm}");
-        var block = string.Join(Environment.NewLine, allLines) + Environment.NewLine + Environment.NewLine;
         var temporary = filePath + ".tmp";
-        File.WriteAllText(temporary, block + stripped);
+        // TXT has no separate tile/corner concept - the one header block IS both layers' worth of
+        // information (see the class comment above TxtMarkerBlock), so a FileWatermarkDisable grant
+        // for a .txt file means the block is fully absent, not partially rewritten.
+        if (includeCornerLayer)
+        {
+            var allLines = lines.Append($"Last Scanned: {lastScannedUtc.ToLocalTime():yyyy-MM-dd HH:mm}");
+            var block = string.Join(Environment.NewLine, allLines) + Environment.NewLine + Environment.NewLine;
+            File.WriteAllText(temporary, block + stripped);
+        }
+        else
+        {
+            File.WriteAllText(temporary, stripped);
+        }
         File.Move(temporary, filePath, true);
     }
 
@@ -394,7 +412,7 @@ public static class ContentWatermarker
     // that get re-watermarked after their tier already changed once; a PDF watermarked for the
     // first time only ever gets one clean pass. PdfPig (this project's other PDF dependency, used
     // by DocumentTextExtractor) is read-only and cannot write, hence PdfSharp here.
-    private static void WatermarkPdf(string filePath, string[] lines, string tileText, (byte R, byte G, byte B) color, TileVisuals visuals, bool includeTileLayer = true, bool forceReapply = false)
+    private static void WatermarkPdf(string filePath, string[] lines, string tileText, (byte R, byte G, byte B) color, TileVisuals visuals, bool includeTileLayer = true, bool includeCornerLayer = true, bool forceReapply = false)
     {
         // The scanner only calls this when a file is genuinely new or changed (see
         // FileInventoryScanner's persisted-hash check) - but that check can't see a stale scan
@@ -403,9 +421,11 @@ public static class ContentWatermarker
         // corner text, so it cannot tell "corner+tile" apart from "corner only" - forceReapply is
         // how FileInventoryScanner bypasses it specifically when re-adding the tile layer after a
         // FileWatermarkDisable grant expires on a PDF that's currently sitting in escrow-restored
-        // (corner-only) state, where the corner text already matches but the tile must still be
-        // (re)drawn.
-        if (!forceReapply && AlreadyHasCurrentPdfWatermark(filePath, lines)) return;
+        // state, where the corner text already matches but the tile must still be (re)drawn. Also
+        // skipped outright when includeCornerLayer is false: the check only ever looks for corner
+        // text, so it would never find a match in that case and would force a pointless rewrite on
+        // every call.
+        if (includeCornerLayer && !forceReapply && AlreadyHasCurrentPdfWatermark(filePath, lines)) return;
 
         var temporary = filePath + ".tmp";
         using (var document = PdfReader.Open(filePath, PdfDocumentOpenMode.Modify))
@@ -446,18 +466,22 @@ public static class ContentWatermarker
                     gfx.DrawImage(tileImage, 0, 0, page.Width.Point, page.Height.Point);
                 }
 
-                const double margin = 18;
-                const double lineHeight = 12;
-
-                // Bottom-right corner: real documents are far more likely to have body text or a
-                // title running into the top margin than to have content reaching all the way down
-                // to the bottom edge, so this corner collides with actual page content less often
-                // (the exact case that motivated this was a PDF whose text started almost at y=0).
-                var y = page.Height.Point - margin - lines.Length * lineHeight;
-                foreach (var line in lines)
+                if (includeCornerLayer)
                 {
-                    gfx.DrawString(line, font, brush, new XRect(0, y, page.Width.Point - margin, lineHeight), format);
-                    y += lineHeight;
+                    const double margin = 18;
+                    const double lineHeight = 12;
+
+                    // Bottom-right corner: real documents are far more likely to have body text or
+                    // a title running into the top margin than to have content reaching all the way
+                    // down to the bottom edge, so this corner collides with actual page content
+                    // less often (the exact case that motivated this was a PDF whose text started
+                    // almost at y=0).
+                    var y = page.Height.Point - margin - lines.Length * lineHeight;
+                    foreach (var line in lines)
+                    {
+                        gfx.DrawString(line, font, brush, new XRect(0, y, page.Width.Point - margin, lineHeight), format);
+                        y += lineHeight;
+                    }
                 }
             }
 
@@ -505,7 +529,7 @@ public static class ContentWatermarker
     // rendering risk - see the class-level comment for the full reasoning. Detects a
     // previously-added header via a marker comment so reclassification replaces the header (and
     // reuses/overwrites its one image part) in place instead of stacking.
-    private static void WatermarkDocx(string filePath, string[] lines, string tileText, (byte R, byte G, byte B) color, TileVisuals visuals, bool includeTileLayer = true)
+    private static void WatermarkDocx(string filePath, string[] lines, string tileText, (byte R, byte G, byte B) color, TileVisuals visuals, bool includeTileLayer = true, bool includeCornerLayer = true)
     {
         var temporary = filePath + ".tmp";
         File.Copy(filePath, temporary, true);
@@ -552,7 +576,7 @@ public static class ContentWatermarker
 
                 using (var writer = new StreamWriter(headerPart.GetStream(FileMode.Create, FileAccess.Write)))
                 {
-                    writer.Write(BuildDocxWatermarkHeaderXml(lines, color, imageRelId, pageWidthEmu, pageHeightEmu));
+                    writer.Write(BuildDocxWatermarkHeaderXml(lines, color, imageRelId, pageWidthEmu, pageHeightEmu, includeCornerLayer));
                 }
 
                 // Unconditional, not just "on first creation": confirmed live 2026-08-26 on a real
@@ -623,22 +647,28 @@ public static class ContentWatermarker
         return ((long)widthTwips * 635, (long)heightTwips * 635);
     }
 
-    private static string BuildDocxWatermarkHeaderXml(string[] lines, (byte R, byte G, byte B) color, string? imageRelId, long pageWidthEmu, long pageHeightEmu)
+    private static string BuildDocxWatermarkHeaderXml(string[] lines, (byte R, byte G, byte B) color, string? imageRelId, long pageWidthEmu, long pageHeightEmu, bool includeCornerLayer = true)
     {
         // The true, fully-saturated tier color, not a lightened tint - a plain corner marker like
         // this never sits over body content, so there's no readability reason to soften it.
         var hex = $"{color.R:X2}{color.G:X2}{color.B:X2}";
 
-        var paragraphs = string.Join(Environment.NewLine, lines.Select((line, index) =>
-            $$"""
-              <w:p>
-                <w:pPr><w:pStyle w:val="Header"/><w:jc w:val="right"/></w:pPr>
-                <w:r>
-                  <w:rPr><w:rFonts w:ascii="{{FontFamily}}" w:hAnsi="{{FontFamily}}"/><w:b w:val="{{(index == 0 ? "1" : "0")}}"/><w:sz w:val="16"/><w:color w:val="{{hex}}"/></w:rPr>
-                  <w:t xml:space="preserve">{{System.Security.SecurityElement.Escape(line)}}</w:t>
-                </w:r>
-              </w:p>
-              """));
+        // When the corner layer is hidden, still emit one empty marker paragraph rather than zero
+        // paragraphs - HeaderContainsOurMarker's detection relies on the "<!--CompanyDlpWatermark-->"
+        // comment below regardless, but an empty <w:hdr> with literally no <w:p> children is an
+        // unverified edge case across Word/LibreOffice/Google Docs, so this avoids relying on it.
+        var paragraphs = includeCornerLayer
+            ? string.Join(Environment.NewLine, lines.Select((line, index) =>
+                $$"""
+                  <w:p>
+                    <w:pPr><w:pStyle w:val="Header"/><w:jc w:val="right"/></w:pPr>
+                    <w:r>
+                      <w:rPr><w:rFonts w:ascii="{{FontFamily}}" w:hAnsi="{{FontFamily}}"/><w:b w:val="{{(index == 0 ? "1" : "0")}}"/><w:sz w:val="16"/><w:color w:val="{{hex}}"/></w:rPr>
+                      <w:t xml:space="preserve">{{System.Security.SecurityElement.Escape(line)}}</w:t>
+                    </w:r>
+                  </w:p>
+                  """))
+            : """<w:p><w:pPr><w:pStyle w:val="Header"/></w:pPr></w:p>""";
 
         // The marker is an XML comment, not a hidden ("vanish") text run: confirmed live that
         // neither Google Docs' importer nor Word Online reliably honor vanish formatting, so the
@@ -703,7 +733,7 @@ public static class ContentWatermarker
     // shared tile-layer PNG (see BuildTileLayerPng) embedded as a plain picture covering the whole
     // slide, behind everything else. Detects and replaces a previous watermark shape/picture (and
     // its image part) by name, so reclassification does not stack or leave orphaned media parts.
-    private static void WatermarkPptx(string filePath, string[] lines, string tileText, (byte R, byte G, byte B) color, TileVisuals visuals, bool includeTileLayer = true)
+    private static void WatermarkPptx(string filePath, string[] lines, string tileText, (byte R, byte G, byte B) color, TileVisuals visuals, bool includeTileLayer = true, bool includeCornerLayer = true)
     {
         var temporary = filePath + ".tmp";
         File.Copy(filePath, temporary, true);
@@ -742,7 +772,10 @@ public static class ContentWatermarker
                         // ones in DrawingML's z-order), then the single readable corner block on top.
                         shapeTree.AppendChild(new P.Picture(BuildPptxTileWatermarkPictureXml(imageRelId, slideWidth, slideHeight)));
                     }
-                    shapeTree.AppendChild(new P.Shape(BuildPptxWatermarkShapeXml(lines, color, slideWidth, slideHeight)));
+                    if (includeCornerLayer)
+                    {
+                        shapeTree.AppendChild(new P.Shape(BuildPptxWatermarkShapeXml(lines, color, slideWidth, slideHeight)));
+                    }
                     slidePart.Slide!.Save();
                 }
             }
@@ -861,7 +894,7 @@ public static class ContentWatermarker
     private const double XlsxTileWidthPoints = 960;  // ~20 default-width columns
     private const double XlsxTileHeightPoints = 900; // ~60 default-height rows
 
-    private static void WatermarkXlsx(string filePath, string[] lines, string tileText, (byte R, byte G, byte B) color, TileVisuals visuals, bool includeTileLayer = true)
+    private static void WatermarkXlsx(string filePath, string[] lines, string tileText, (byte R, byte G, byte B) color, TileVisuals visuals, bool includeTileLayer = true, bool includeCornerLayer = true)
     {
         var temporary = filePath + ".tmp";
         File.Copy(filePath, temporary, true);
@@ -875,7 +908,7 @@ public static class ContentWatermarker
 
                 foreach (var worksheetPart in workbookPart.WorksheetParts)
                 {
-                    ApplyXlsxWorksheetWatermark(worksheetPart, lines, tilePng, color, visuals);
+                    ApplyXlsxWorksheetWatermark(worksheetPart, lines, tilePng, color, visuals, includeCornerLayer);
                 }
             }
             File.Move(temporary, filePath, true);
@@ -886,7 +919,7 @@ public static class ContentWatermarker
         }
     }
 
-    private static void ApplyXlsxWorksheetWatermark(WorksheetPart worksheetPart, string[] lines, byte[]? tilePng, (byte R, byte G, byte B) color, TileVisuals visuals)
+    private static void ApplyXlsxWorksheetWatermark(WorksheetPart worksheetPart, string[] lines, byte[]? tilePng, (byte R, byte G, byte B) color, TileVisuals visuals, bool includeCornerLayer = true)
     {
         var drawingsPart = worksheetPart.DrawingsPart;
         Xdr.WorksheetDrawing worksheetDrawing;
@@ -930,7 +963,7 @@ public static class ContentWatermarker
             var imageRelId = drawingsPart.GetIdOfPart(imagePart);
             worksheetDrawing.Append(BuildXlsxTileAnchor(imageRelId));
         }
-        worksheetDrawing.Append(BuildXlsxCornerAnchor(lines, color));
+        if (includeCornerLayer) worksheetDrawing.Append(BuildXlsxCornerAnchor(lines, color));
 
         // Explicit Save() on both modified part roots - matches WatermarkPptx's
         // slidePart.Slide!.Save() and WatermarkDocx's mainPart.Document!.Save() elsewhere in this
@@ -1033,7 +1066,7 @@ public static class ContentWatermarker
     // on RECLASSIFICATION the previous pass's corner text is not erased - the new text is drawn on
     // top of it and both remain visible/overlap. A file watermarked for the first time only ever
     // gets one clean pass.
-    private static void WatermarkImage(string filePath, string[] lines, string tileText, (byte R, byte G, byte B) color, TileVisuals visuals, bool includeTileLayer = true)
+    private static void WatermarkImage(string filePath, string[] lines, string tileText, (byte R, byte G, byte B) color, TileVisuals visuals, bool includeTileLayer = true, bool includeCornerLayer = true)
     {
         var temporary = filePath + ".tmp";
         using (var original = new Bitmap(filePath))
@@ -1050,19 +1083,22 @@ public static class ContentWatermarker
                 // before this layer was unified with the other formats.
                 if (includeTileLayer) DrawTileLayer(graphics, original.Width, original.Height, 1.0, tileText, color, visuals);
 
-                var fontSize = Math.Max(8f, Math.Min(original.Width, original.Height) / 26f);
-                using var font = new System.Drawing.Font(FontFamily, fontSize, System.Drawing.FontStyle.Bold);
-                using var textBrush = new SolidBrush(System.Drawing.Color.FromArgb(255, color.R, color.G, color.B));
-
-                var lineSizes = lines.Select(line => graphics.MeasureString(line, font)).ToArray();
-                const float margin = 8f;
-                // Bottom-right corner - see WatermarkPdf's comment for why.
-                var blockHeight = lineSizes.Sum(size => size.Height);
-                var y = original.Height - blockHeight - margin * 0.5f;
-                foreach (var (line, size) in lines.Zip(lineSizes))
+                if (includeCornerLayer)
                 {
-                    graphics.DrawString(line, font, textBrush, original.Width - size.Width - margin * 1.5f, y);
-                    y += size.Height;
+                    var fontSize = Math.Max(8f, Math.Min(original.Width, original.Height) / 26f);
+                    using var font = new System.Drawing.Font(FontFamily, fontSize, System.Drawing.FontStyle.Bold);
+                    using var textBrush = new SolidBrush(System.Drawing.Color.FromArgb(255, color.R, color.G, color.B));
+
+                    var lineSizes = lines.Select(line => graphics.MeasureString(line, font)).ToArray();
+                    const float margin = 8f;
+                    // Bottom-right corner - see WatermarkPdf's comment for why.
+                    var blockHeight = lineSizes.Sum(size => size.Height);
+                    var y = original.Height - blockHeight - margin * 0.5f;
+                    foreach (var (line, size) in lines.Zip(lineSizes))
+                    {
+                        graphics.DrawString(line, font, textBrush, original.Width - size.Width - margin * 1.5f, y);
+                        y += size.Height;
+                    }
                 }
             }
 

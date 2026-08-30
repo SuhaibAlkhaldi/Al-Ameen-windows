@@ -51,7 +51,7 @@ public sealed class WatermarkEscrowSyncWorker(
         var records = escrowStore.GetAll();
 
         // Phase 1: upload any DEK the backend hasn't taken custody of yet. Each record's plaintext
-        // key only ever exists locally (DPAPI-protected) between CreateFromCornerOnlyBytes and this
+        // key only ever exists locally (DPAPI-protected) between CreateFromPristineBytes and this
         // call succeeding - see WatermarkEscrowStore's class comment.
         foreach (var record in records.Where(item => !item.KeyWrapped))
         {
@@ -85,7 +85,7 @@ public sealed class WatermarkEscrowSyncWorker(
         // FileWatermarkDisable grant. Only reachable for records that already made it through
         // Phase 1 (KeyWrapped) - a record whose key hasn't even been wrapped yet obviously has
         // nothing to unwrap; it will be picked up here on a later cycle once Phase 1 catches up.
-        foreach (var record in records.Where(item => item.RestoreRequested && item.KeyWrapped && !item.TileHidden))
+        foreach (var record in records.Where(item => item.RestoreRequested && item.KeyWrapped && !item.WatermarkHidden))
         {
             cancellationToken.ThrowIfCancellationRequested();
             byte[]? plainDek = null;
@@ -96,7 +96,7 @@ public sealed class WatermarkEscrowSyncWorker(
                     // The file moved/was deleted/renamed since the request was flagged - nothing to
                     // restore onto. Clear the request so this doesn't retry forever; a future scan
                     // tick re-flags it if the file reappears at a newly-known path.
-                    escrowStore.MarkTileHidden(record.EscrowId, hidden: false);
+                    escrowStore.MarkWatermarkHidden(record.EscrowId, hidden: false);
                     continue;
                 }
 
@@ -110,17 +110,17 @@ public sealed class WatermarkEscrowSyncWorker(
                 }, cancellationToken);
 
                 plainDek = Convert.FromBase64String(response.PlainKeyBase64);
-                var cornerOnlyBytes = escrowStore.DecryptBlob(record.EscrowId, plainDek);
+                var pristineBytes = escrowStore.DecryptBlob(record.EscrowId, plainDek);
 
                 var temporary = record.LivePath + ".tmp";
-                await File.WriteAllBytesAsync(temporary, cornerOnlyBytes, cancellationToken);
+                await File.WriteAllBytesAsync(temporary, pristineBytes, cancellationToken);
                 File.Move(temporary, record.LivePath, true);
 
-                escrowStore.MarkTileHidden(record.EscrowId, hidden: true);
+                escrowStore.MarkWatermarkHidden(record.EscrowId, hidden: true);
             }
             catch (Exception exception)
             {
-                logger.LogWarning(exception, "Could not restore the corner-only watermark for {EscrowId}; will retry.", record.EscrowId);
+                logger.LogWarning(exception, "Could not restore the pristine (watermark-hidden) file for {EscrowId}; will retry.", record.EscrowId);
             }
             finally
             {

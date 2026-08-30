@@ -7,11 +7,11 @@ namespace CompanyDlp.Service;
 
 // One record per PDF/image file that has ever been watermarked while ActionKeys.FileWatermarkDisable
 // existed - see ContentWatermarker's class comment for why PDF/images (unlike Word/PowerPoint/Excel)
-// cannot have their tile layer surgically removed after the fact: both watermark layers are baked
-// into one flattened surface with no separable "tile" object. This store captures a corner-only
-// (tile-free) render at first-watermark time, encrypted locally with a random per-record AES-256
-// key (the DEK), so that render can be restored later without ever having kept an unencrypted copy
-// of pre-tile content sitting on disk.
+// cannot have their watermark layers surgically removed after the fact: both the tile and the
+// corner info block are baked into one flattened surface with no separable objects. This store
+// captures a fully pristine (no tile, no corner) copy of the file's bytes at first-watermark time,
+// encrypted locally with a random per-record AES-256 key (the DEK), so that copy can be restored
+// later without ever having kept an unencrypted copy of pre-watermark content sitting on disk.
 //
 // The DEK itself is never persisted in the clear beyond the brief window between generation and a
 // successful wrap call: WatermarkEscrowSyncWorker sends it to BackendApiClient.WrapFileKeyAsync -
@@ -38,7 +38,7 @@ public sealed record WatermarkEscrowRecord(
     bool KeyWrapped,
     string? KeyId,
     string? WrappedKeyBase64,
-    bool TileHidden,
+    bool WatermarkHidden,
     bool RestoreRequested);
 
 public sealed class WatermarkEscrowStore(PolicyStore policyStore, MachineDataProtector protector, ILogger<WatermarkEscrowStore> logger)
@@ -72,24 +72,24 @@ public sealed class WatermarkEscrowStore(PolicyStore policyStore, MachineDataPro
         }
     }
 
-    // Called once, the first time a PDF/image is watermarked, BEFORE the tile layer is drawn onto
-    // the live file - cornerOnlyBytes must already be the tile-free render (see ContentWatermarker's
-    // includeTileLayer:false path). Generates a fresh AES-256 DEK, encrypts cornerOnlyBytes with it,
-    // writes the ciphertext to a local blob file, and DPAPI-protects the plaintext DEK into a
-    // separate pending-key file for WatermarkEscrowSyncWorker to pick up and wrap server-side. The
-    // plaintext DEK is zeroed from memory before this method returns.
-    public WatermarkEscrowRecord CreateFromCornerOnlyBytes(
-        string classificationHash, string extension, string livePath, byte[] cornerOnlyBytes)
+    // Called once, the first time a PDF/image is ever about to be watermarked - pristineBytes must
+    // already be the file's untouched content, before any watermark layer is drawn onto the live
+    // file. Generates a fresh AES-256 DEK, encrypts pristineBytes with it, writes the ciphertext to
+    // a local blob file, and DPAPI-protects the plaintext DEK into a separate pending-key file for
+    // WatermarkEscrowSyncWorker to pick up and wrap server-side. The plaintext DEK is zeroed from
+    // memory before this method returns.
+    public WatermarkEscrowRecord CreateFromPristineBytes(
+        string classificationHash, string extension, string livePath, byte[] pristineBytes)
     {
         var escrowId = Guid.NewGuid();
         var dek = RandomNumberGenerator.GetBytes(32);
         byte[] nonce = RandomNumberGenerator.GetBytes(12);
-        var ciphertext = new byte[cornerOnlyBytes.Length];
+        var ciphertext = new byte[pristineBytes.Length];
         var tag = new byte[16];
         try
         {
             using var aesGcm = new AesGcm(dek, tag.Length);
-            aesGcm.Encrypt(nonce, cornerOnlyBytes, ciphertext, tag);
+            aesGcm.Encrypt(nonce, pristineBytes, ciphertext, tag);
 
             Directory.CreateDirectory(BlobDirectory);
             var blobPath = Path.Combine(BlobDirectory, $"{escrowId:N}.bin");
@@ -116,7 +116,7 @@ public sealed class WatermarkEscrowStore(PolicyStore policyStore, MachineDataPro
 
         var record = new WatermarkEscrowRecord(
             escrowId, classificationHash, extension, livePath, DateTimeOffset.UtcNow,
-            KeyWrapped: false, KeyId: null, WrappedKeyBase64: null, TileHidden: false, RestoreRequested: false);
+            KeyWrapped: false, KeyId: null, WrappedKeyBase64: null, WatermarkHidden: false, RestoreRequested: false);
 
         lock (_sync)
         {
@@ -179,24 +179,24 @@ public sealed class WatermarkEscrowStore(PolicyStore policyStore, MachineDataPro
         lock (_sync)
         {
             EnsureLoaded();
-            if (!_records!.TryGetValue(escrowId, out var record) || record.RestoreRequested || record.TileHidden) return;
+            if (!_records!.TryGetValue(escrowId, out var record) || record.RestoreRequested || record.WatermarkHidden) return;
             _records[escrowId] = record with { RestoreRequested = true };
             Save();
         }
     }
 
-    public void MarkTileHidden(Guid escrowId, bool hidden)
+    public void MarkWatermarkHidden(Guid escrowId, bool hidden)
     {
         lock (_sync)
         {
             EnsureLoaded();
             if (!_records!.TryGetValue(escrowId, out var record)) return;
-            _records[escrowId] = record with { TileHidden = hidden, RestoreRequested = false };
+            _records[escrowId] = record with { WatermarkHidden = hidden, RestoreRequested = false };
             Save();
         }
     }
 
-    // Decrypts this record's stored corner-only blob using the plaintext DEK the caller already
+    // Decrypts this record's stored pristine blob using the plaintext DEK the caller already
     // unwrapped via the backend - never called with a DEK this store generated itself and still had
     // lying around (see the class comment: the whole point is that this store never holds a usable
     // plaintext key once wrapping succeeds).

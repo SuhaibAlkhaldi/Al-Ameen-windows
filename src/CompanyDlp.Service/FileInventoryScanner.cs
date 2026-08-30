@@ -413,13 +413,14 @@ public sealed class FileInventoryScanner(
         new(StringComparer.OrdinalIgnoreCase) { ".pdf", ".jpg", ".jpeg", ".png" };
 
     // Stamps (or, under an active ActionKeys.FileWatermarkDisable grant, withholds/removes) the
-    // classification watermark's tile layer in the file's own content (see ContentWatermarker) when
-    // the policy opts in - a separate, independently-gated step from ApplyFilenameTag, called on
-    // whatever path ApplyFilenameTag already settled on. Returns the write-time callers should
-    // record in _lastSeenWriteTimes: any rewrite here bumps the file's real LastWriteTimeUtc, which
-    // must be re-read from disk after a successful write - reusing the pre-write timestamp here
-    // would make the very next tick see what looks like a fresh edit (our own write) and loop
-    // forever: reclassify -> re-watermark -> reclassify.
+    // classification watermark - both the tile layer AND the small corner info block (see
+    // ContentWatermarker) - in the file's own content when the policy opts in - a separate,
+    // independently-gated step from ApplyFilenameTag, called on whatever path ApplyFilenameTag
+    // already settled on. Returns the write-time callers should record in _lastSeenWriteTimes: any
+    // rewrite here bumps the file's real LastWriteTimeUtc, which must be re-read from disk after a
+    // successful write - reusing the pre-write timestamp here would make the very next tick see what
+    // looks like a fresh edit (our own write) and loop forever: reclassify -> re-watermark ->
+    // reclassify.
     private DateTime ApplyContentWatermarkIfEnabled(
         string path, string classification, string classificationHash, DateTimeOffset scannedAtUtc,
         DlpPolicy fullPolicy, FileClassificationPolicy policy,
@@ -490,141 +491,123 @@ public sealed class FileInventoryScanner(
         return decision.IsAllowed;
     }
 
-    // Applies (hideTileLayer=false) or hides (hideTileLayer=true) the tile layer for one file,
-    // dispatching per format. Returns true if the file's bytes were actually rewritten (mirrors
-    // ContentWatermarker.ApplyWatermark's own return contract) so callers know whether to re-read
-    // LastWriteTimeUtc.
+    // Applies (hideWatermark=false) or hides (hideWatermark=true) BOTH watermark layers - tile and
+    // corner info block - for one file, dispatching per format. Returns true if the file's bytes
+    // were actually rewritten (mirrors ContentWatermarker.ApplyWatermark's own return contract) so
+    // callers know whether to re-read LastWriteTimeUtc.
     private bool ApplyOrRemoveWatermark(
         string path, string classification, string classificationHash, DateTimeOffset scannedAtUtc,
-        WatermarkPolicy watermarkPolicy, ClientContext context, bool hideTileLayer)
+        WatermarkPolicy watermarkPolicy, ClientContext context, bool hideWatermark)
     {
         var extension = Path.GetExtension(path);
 
         if (!EscrowRequiredExtensions.Contains(extension))
         {
-            // Word/PowerPoint/Excel: the tile is a distinct, independently-removable embedded
-            // picture - no escrow needed either direction. TXT has no tile layer at all; both calls
-            // below are harmless no-ops for it beyond the ordinary corner-block refresh.
-            return hideTileLayer
-                ? ContentWatermarker.RemoveTileLayer(path, classification, scannedAtUtc, context, watermarkPolicy, logger)
+            // Word/PowerPoint/Excel: both layers are distinct, independently-removable embedded
+            // objects - no escrow needed either direction. TXT has no separate tile/corner concept;
+            // its one combined header block is simply present or absent.
+            return hideWatermark
+                ? ContentWatermarker.RemoveWatermarkLayers(path, classification, scannedAtUtc, context, watermarkPolicy, logger)
                 : ContentWatermarker.ApplyWatermark(path, classification, scannedAtUtc, context, watermarkPolicy, logger);
         }
 
         // PDF/images from here on - the escrow path (see WatermarkEscrowStore's class comment).
         var escrow = escrowStore.TryGetByClassificationHash(classificationHash);
 
-        if (!hideTileLayer)
+        if (!hideWatermark)
         {
             // Default state (no active grant right now).
             if (escrow is null)
             {
                 // This exact content has never reached the watermark step before, full stop -
-                // capture a corner-only escrow snapshot from the file's still-pristine current
-                // bytes BEFORE the tile gets drawn onto the live file below. This is what
-                // guarantees a LATER grant (activated any time after this moment, even long after)
-                // always has something to restore from. Confirmed live (2026-08-27): without this,
-                // escrow records only ever got created while a grant happened to already be active
-                // at first-watermark time - the far more common case (grant activates on content
-                // that was already watermarked earlier, ungated) hit the escrow-is-null branch
-                // below with no earlier "pristine" bytes left anywhere to build a snapshot from,
-                // and silently produced a no-op that still claimed success.
-                escrow = CreateEscrowSnapshotOnly(path, classification, classificationHash, extension, scannedAtUtc, watermarkPolicy, context);
+                // capture a pristine escrow snapshot from the file's still-untouched current bytes
+                // BEFORE any watermark gets drawn onto the live file below. This is what guarantees
+                // a LATER grant (activated any time after this moment, even long after) always has
+                // something to restore from. Confirmed live (2026-08-27): without this, escrow
+                // records only ever got created while a grant happened to already be active at
+                // first-watermark time - the far more common case (grant activates on content that
+                // was already watermarked earlier, ungated) hit the escrow-is-null branch below
+                // with no earlier pristine bytes left anywhere to build a snapshot from, and
+                // silently produced a no-op that still claimed success.
+                escrow = CreateEscrowSnapshotOnly(path, classificationHash, extension);
             }
 
-            // If this content was previously restored to corner-only via escrow, the tile must be
-            // redrawn on top of it - forceReapply bypasses WatermarkPdf's "already looks right"
-            // early-return, which only ever looks at the corner text and can't otherwise tell
-            // "corner only" apart from "corner+tile" (see that method's comment). Images have no
-            // equivalent early-return; a normal call already always composites unconditionally.
-            var forceReapply = extension.Equals(".pdf", StringComparison.OrdinalIgnoreCase) && escrow is { TileHidden: true };
-            var rewrote = ContentWatermarker.ApplyWatermark(path, classification, scannedAtUtc, context, watermarkPolicy, logger, includeTileLayer: true, forceReapply: forceReapply);
-            if (escrow is { TileHidden: true }) escrowStore.MarkTileHidden(escrow.EscrowId, hidden: false);
+            // If this content was previously restored to its pristine escrow state, both layers
+            // must be redrawn on top of it - forceReapply bypasses WatermarkPdf's "already looks
+            // right" early-return, which only ever looks at the corner text and can't otherwise
+            // tell "escrow-restored" apart from "fully watermarked" (see that method's comment).
+            // Images have no equivalent early-return; a normal call already always composites
+            // unconditionally.
+            var forceReapply = extension.Equals(".pdf", StringComparison.OrdinalIgnoreCase) && escrow is { WatermarkHidden: true };
+            var rewrote = ContentWatermarker.ApplyWatermark(path, classification, scannedAtUtc, context, watermarkPolicy, logger, includeTileLayer: true, includeCornerLayer: true, forceReapply: forceReapply);
+            if (escrow is { WatermarkHidden: true }) escrowStore.MarkWatermarkHidden(escrow.EscrowId, hidden: false);
             return rewrote;
         }
 
-        // A grant is active - the tile must come off.
+        // A grant is active - both layers must come off.
         if (escrow is null)
         {
             // Genuinely fresh content that has never been watermarked at all yet, AND a grant is
             // already active the very first time it's ever seen: the live file is still pristine,
-            // so it's safe to build the corner-only render directly (cheap, fully local, no
-            // network needed) and write it straight to the live file.
-            return CreateEscrowAndHideDirectly(path, classification, classificationHash, extension, scannedAtUtc, watermarkPolicy, context);
+            // so it's safe to escrow it and leave it exactly as-is (cheap, fully local, no network
+            // needed).
+            return CreateEscrowAndHideDirectly(path, classificationHash, extension);
         }
 
-        if (escrow.TileHidden) return false; // already hidden, nothing to do
+        if (escrow.WatermarkHidden) return false; // already hidden, nothing to do
 
         // An escrow snapshot exists for this content (captured either just now above, or at some
-        // earlier first-watermark pass) but the live file currently shows the tile - the only way
-        // to reach corner-only from here is restoring that escrow, which needs the backend to
-        // unwrap the DEK first. Flag it for WatermarkEscrowSyncWorker; the live file is left as-is
-        // (still fully watermarked, the safe default) until that completes.
+        // earlier first-watermark pass) but the live file currently shows the watermark - the only
+        // way to reach the hidden state from here is restoring that escrow, which needs the backend
+        // to unwrap the DEK first. Flag it for WatermarkEscrowSyncWorker; the live file is left
+        // as-is (still fully watermarked, the safe default) until that completes.
         escrowStore.RequestRestore(escrow.EscrowId);
         return false;
     }
 
-    // Captures a corner-only escrow snapshot from a file's CURRENT, still-pristine (not yet tiled)
-    // bytes, without touching the live file - called immediately before the tile is about to be
-    // drawn onto it for the very first time (see the !hideTileLayer branch above). Only ever
-    // reached when TryGetByClassificationHash just returned null for this content, i.e. nothing
-    // has drawn a tile onto it yet.
-    private WatermarkEscrowRecord? CreateEscrowSnapshotOnly(
-        string path, string classification, string classificationHash, string extension,
-        DateTimeOffset scannedAtUtc, WatermarkPolicy watermarkPolicy, ClientContext context)
+    // Captures a pristine escrow snapshot straight from a file's CURRENT, still-untouched bytes,
+    // without touching the live file - called immediately before any watermark layer is about to be
+    // drawn onto it for the very first time (see the !hideWatermark branch above). Only ever reached
+    // when TryGetByClassificationHash just returned null for this content, i.e. nothing has drawn a
+    // watermark onto it yet. Reads the bytes directly rather than round-tripping through
+    // ContentWatermarker.ApplyWatermark - the file at this point already IS the pristine reference
+    // copy, and routing it through PdfSharp's Save() / GDI+'s Bitmap.Save() to draw nothing would
+    // only risk an unnecessary re-serialization (a lossy re-encode, for JPEG specifically) of the
+    // exact bytes this snapshot needs to preserve untouched.
+    private WatermarkEscrowRecord? CreateEscrowSnapshotOnly(string path, string classificationHash, string extension)
     {
-        var temporaryCopy = path + ".escrow-tmp" + extension;
         try
         {
-            File.Copy(path, temporaryCopy, true);
-            if (!ContentWatermarker.ApplyWatermark(temporaryCopy, classification, scannedAtUtc, context, watermarkPolicy, logger, includeTileLayer: false))
-                return null;
-
-            var cornerOnlyBytes = File.ReadAllBytes(temporaryCopy);
-            return escrowStore.CreateFromCornerOnlyBytes(classificationHash, extension, path, cornerOnlyBytes);
+            var pristineBytes = File.ReadAllBytes(path);
+            return escrowStore.CreateFromPristineBytes(classificationHash, extension, path, pristineBytes);
         }
         catch (Exception exception)
         {
-            logger.LogWarning(exception, "Could not capture a watermark escrow snapshot for {Path}; a future grant for this content will not be able to hide its tile layer.", path);
+            logger.LogWarning(exception, "Could not capture a watermark escrow snapshot for {Path}; a future grant for this content will not be able to hide its watermark.", path);
             return null;
-        }
-        finally
-        {
-            try { if (File.Exists(temporaryCopy)) File.Delete(temporaryCopy); } catch { }
         }
     }
 
-    // Builds a corner-only render of a file that has never been watermarked before (this tick is
-    // its first classification pass) AND has an active FileWatermarkDisable grant already, escrows
-    // it for any future toggling, and writes that same corner-only content straight to the live
-    // file - safe to do synchronously and without any network round trip specifically because
-    // there is no earlier "fully tiled" version anywhere yet to be inconsistent with. Every later
-    // toggle of this same content goes through the escrow restore path in ApplyOrRemoveWatermark
-    // instead, which does need the network.
-    private bool CreateEscrowAndHideDirectly(
-        string path, string classification, string classificationHash, string extension,
-        DateTimeOffset scannedAtUtc, WatermarkPolicy watermarkPolicy, ClientContext context)
+    // Escrows a file that has never been watermarked before (this tick is its first classification
+    // pass) AND has an active FileWatermarkDisable grant already - the live file's current bytes are
+    // already the pristine reference copy, so this just records them in escrow and leaves the live
+    // file untouched (no watermark ever gets drawn on it), safe to do synchronously and without any
+    // network round trip specifically because there is no earlier "fully watermarked" version
+    // anywhere yet to be inconsistent with. Every later toggle of this same content goes through the
+    // escrow restore path in ApplyOrRemoveWatermark instead, which does need the network.
+    private bool CreateEscrowAndHideDirectly(string path, string classificationHash, string extension)
     {
-        var temporaryCopy = path + ".escrow-tmp" + extension;
         try
         {
-            File.Copy(path, temporaryCopy, true);
-            if (!ContentWatermarker.ApplyWatermark(temporaryCopy, classification, scannedAtUtc, context, watermarkPolicy, logger, includeTileLayer: false))
-                return false;
-
-            var cornerOnlyBytes = File.ReadAllBytes(temporaryCopy);
-            var record = escrowStore.CreateFromCornerOnlyBytes(classificationHash, extension, path, cornerOnlyBytes);
-            File.Copy(temporaryCopy, path, true);
-            escrowStore.MarkTileHidden(record.EscrowId, hidden: true);
-            return true;
+            var pristineBytes = File.ReadAllBytes(path);
+            var record = escrowStore.CreateFromPristineBytes(classificationHash, extension, path, pristineBytes);
+            escrowStore.MarkWatermarkHidden(record.EscrowId, hidden: true);
+            return false; // the live file was never modified - no write-time re-read needed
         }
         catch (Exception exception)
         {
             logger.LogWarning(exception, "Could not create a watermark escrow record for {Path}; leaving its content unchanged.", path);
             return false;
-        }
-        finally
-        {
-            try { if (File.Exists(temporaryCopy)) File.Delete(temporaryCopy); } catch { }
         }
     }
 
