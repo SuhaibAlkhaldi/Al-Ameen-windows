@@ -30,6 +30,20 @@ public static class ActionKeys
     // block (Classification/Device) - a grant for a tier hides both, a revoke restores both.
     public const string FileWatermarkDisable = "file.watermark-disable";
 
+    // FileOpenAccess: gates opening a file that was NOT created locally by the user themselves - see
+    // FileProvenanceStore for how "received from outside" is detected (browser download, USB copy;
+    // anything unmatched defaults to locally-created, i.e. open freely - there is no reliable way to
+    // positively prove local authorship in user-mode). Distinct from FileDecrypt (the employee-facing
+    // manual encrypt/decrypt self-service tool) even though both ultimately call into
+    // FileProtectionEngine - this action represents a mandatory gate applied automatically by
+    // FileInventoryScanner, not an opt-in convenience the employee triggers themselves. Applies to
+    // EVERY classification tier, including Public (see ActionsRequiringGrantEvenForPublic below) -
+    // a received file needs an explicit grant regardless of how sensitive its content is. An admin's
+    // blanket "can open anything received, any tier" grant is just an ordinary grant with no
+    // ClassificationTier/FileHash set (see PermissionEvaluator.MatchesFileScope) - no wildcard tier
+    // value needed, same convention every other action-level grant already uses.
+    public const string FileOpenAccess = "file.open-access";
+
     // CliExecute: presence/allow-deny channel - can this user launch cmd.exe/powershell.exe/
     // powershell_ise.exe/pwsh.exe/wt.exe at all. Enforced entirely by a per-user Explorer
     // DisallowRun/RestrictRun policy (CliExecutionPolicyManager) - AppLocker is deliberately not used
@@ -74,6 +88,7 @@ public static class ActionKeys
         FilePrint,
         WatermarkDisable,
         FileWatermarkDisable,
+        FileOpenAccess,
         CliExecute,
         CliSensitiveCommand
     };

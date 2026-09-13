@@ -4,7 +4,13 @@ using Microsoft.Extensions.Logging;
 
 namespace CompanyDlp.Core;
 
-public sealed record EncryptedFileHashEntry(Guid FileId, string FileHash, DateTimeOffset EncryptedAtUtc);
+// AutoProtected: true only for a .dlpenc produced by FileInventoryScanner's automatic
+// file.open-access enforcement (see ApplyAutoProtectionIfEnabled) - false (the default) for one the
+// employee encrypted themselves via the manual Encrypt/Decrypt self-service tool
+// (FileProtectionCoordinator). FileOpenProtectionWorker only ever auto-decrypts entries flagged true
+// here - a manually-encrypted file is never touched by this feature and stays under the employee's
+// own manual control.
+public sealed record EncryptedFileHashEntry(Guid FileId, string FileHash, DateTimeOffset EncryptedAtUtc, bool AutoProtected = false);
 
 // Local, persisted fileId -> original-plaintext-hash lookup, written by FileProtectionCoordinator right
 // after a successful file.encrypt (the plaintext and its SHA-256 are only ever available before the

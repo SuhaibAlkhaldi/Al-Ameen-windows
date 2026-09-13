@@ -56,6 +56,7 @@ public sealed class PipeServerTests : IDisposable
             usbMonitor: null!,
             runtimeOverrides,
             notificationStore: null!,
+            fileProvenanceStore: null!,
             NullLogger<PipeServer>.Instance);
     }
 

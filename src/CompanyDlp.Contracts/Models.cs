@@ -140,6 +140,32 @@ public sealed class FileProtectionResponse
     public string Message { get; set; } = "";
 }
 
+// See DlpMessageTypes.DownloadCompleted's comment - just the final absolute path a browser download
+// landed at, reported once chrome.downloads confirms state "complete".
+public sealed class DownloadCompletedNotice
+{
+    public string Path { get; set; } = "";
+}
+
+public sealed class FileOpenAccessRequest
+{
+    public string FilePath { get; set; } = "";
+}
+
+// Distinct from FileProtectionResponse (not reused) so the Desktop app's alert UI has what it needs
+// (Classification, CorrelationId to build the "Request Permission" deep link) without overloading
+// that contract's meaning for its other, unrelated callers.
+public sealed class FileOpenAccessResponse
+{
+    public Guid CorrelationId { get; set; }
+    public bool Success { get; set; }
+    public string OutputPath { get; set; } = "";
+    public string ErrorCode { get; set; } = "";
+    public string Message { get; set; } = "";
+    public string Classification { get; set; } = "";
+    public string FileName { get; set; } = "";
+}
+
 public sealed class AuditOutboxStatus
 {
     public int PendingCount { get; set; }

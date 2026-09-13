@@ -52,6 +52,20 @@ namespace CompanyDlp.Core;
 // which is also what makes them "match each other" and match the screen watermark, as requested.
 public static class ContentWatermarker
 {
+    // Bumped whenever BuildWatermarkTileText's TEXT changes shape in a way worth redrawing every
+    // already-watermarked PDF/image for (Word/PowerPoint/Excel don't need this - their tile is a
+    // separate embedded object that FileInventoryScanner's ApplyWatermark call always regenerates
+    // unconditionally on its next scan, no version tracking needed). PDF's own AlreadyHasCurrentPdfWatermark
+    // early-return and images' complete lack of one both only ever look at the corner block
+    // (Classification/Device), which this format change never touched - so neither format would
+    // otherwise notice its tile is stale. See WatermarkEscrowRecord.TileFormatVersion and
+    // FileInventoryScanner's escrow branch, which compares a file's escrow record against this
+    // constant to force exactly one redraw for anything still behind. 1 = the original device/user/
+    // time tile (implicit, no constant existed yet). 2 = Classification/Last Scanned (2026-09-08),
+    // replacing device/user/time - that content was a duplicate of the live on-screen watermark
+    // with no classification anywhere in the file's own embedded watermark at all.
+    public const int CurrentTileFormatVersion = 2;
+
     // PdfSharp 6.x has no built-in OS font fallback of its own - by default it leans on GDI+
     // (System.Drawing) font family enumeration, which is a well-known unreliable combination inside
     // a Windows Service running as LocalSystem with no interactive desktop session (Session 0):
@@ -150,20 +164,20 @@ public static class ContentWatermarker
     // must agree - the file's own displayed "Last Scanned" text must never say something different
     // than the "Last Scanned" the Properties tab and Explorer column show for the same file.
     //
-    // context supplies the interactive user's name/machine for the tiled layer's text - NOT
-    // Environment.UserName/Environment.MachineName, since this runs inside CompanyDlp.Service as
-    // LocalSystem, where Environment.UserName is "SYSTEM", not the employee actually using the
-    // file. FileInventoryScanner already resolves this correctly via InteractiveUserContextProvider
-    // for classification requests; the same ClientContext is threaded through here.
-    //
     // Status is not a parameter: this is only ever called from the branches that just determined a
     // file's status IS "Up to Date" (see FileInventoryScanner), so the displayed value is always
     // that fixed string - a parameter that can only ever hold one value would be pure ceremony.
+    //
+    // No longer takes a ClientContext: it used to supply the interactive user's name/machine for the
+    // tiled layer's text, but that content moved to Classification/Last Scanned instead (see
+    // BuildWatermarkTileText's comment) - the file's embedded watermark no longer needs to know who's
+    // interactively using the machine at all. FileInventoryScanner's own ClientContext is unrelated
+    // (still used for the permission-evaluation decision of WHETHER to watermark, just not for what
+    // the watermark says).
     public static bool ApplyWatermark(
         string filePath,
         string classificationTier,
         DateTimeOffset lastScannedUtc,
-        ClientContext context,
         WatermarkPolicy watermarkPolicy,
         ILogger logger,
         bool includeTileLayer = true,
@@ -176,7 +190,7 @@ public static class ContentWatermarker
         if (!IsSupported(extension)) return false;
 
         var lines = BuildInfoLines(label);
-        var tileText = BuildWatermarkTileText(context, watermarkPolicy, lastScannedUtc);
+        var tileText = BuildWatermarkTileText(watermarkPolicy, label, lastScannedUtc);
         var visuals = ResolveTileVisuals(watermarkPolicy);
 
         try
@@ -217,7 +231,6 @@ public static class ContentWatermarker
         string filePath,
         string classificationTier,
         DateTimeOffset lastScannedUtc,
-        ClientContext context,
         WatermarkPolicy watermarkPolicy,
         ILogger logger,
         bool hideTile = true,
@@ -233,7 +246,7 @@ public static class ContentWatermarker
                 $"{extension} cannot have its watermark layers removed in place - route it through the escrow restore path instead.");
         }
 
-        return ApplyWatermark(filePath, classificationTier, lastScannedUtc, context, watermarkPolicy, logger,
+        return ApplyWatermark(filePath, classificationTier, lastScannedUtc, watermarkPolicy, logger,
             includeTileLayer: !hideTile, includeCornerLayer: !hideCorner);
     }
 
@@ -252,38 +265,22 @@ public static class ContentWatermarker
         $"Device: {Environment.MachineName}",
     ];
 
-    // Mirrors WatermarkWindow.BuildText() (CompanyDlp.Desktop\Watermark) exactly in shape - same
-    // parts, same " - " join, same "IncludeSessionId exists on WatermarkPolicy but is never
-    // actually appended" behavior (kept for parity with the live screen overlay, not fixed here,
-    // since the point of this method is to match that code's behavior, not improve on it
-    // unilaterally). The one deliberate difference: username/machine come from the interactive
-    // ClientContext (see ApplyWatermark's comment), and "time" is the scan timestamp rather than
-    // DateTime.Now, since a stamped file is written once per scan, not re-rendered every second.
-    private static string BuildWatermarkTileText(ClientContext context, WatermarkPolicy policy, DateTimeOffset lastScannedUtc)
+    // Deliberately NOT mirroring WatermarkWindow.BuildText() (CompanyDlp.Desktop\Watermark, the live
+    // on-screen overlay) any more - confirmed live 2026-09-08 that device/user/time here just
+    // duplicated the screen overlay's own content with no classification anywhere in the file's
+    // embedded watermark at all, which is the one thing this tiled layer is actually for (the corner
+    // block's BuildInfoLines already carries Classification/Device, but deliberately excludes a
+    // timestamp - see its own comment on why - so "Last Scanned" belongs here instead). Two lines,
+    // same shape as the corner block: Classification (matches BuildInfoLines' label) and Last
+    // Scanned (the same scan timestamp FileInventoryScanner is about to persist alongside this).
+    private static string BuildWatermarkTileText(WatermarkPolicy policy, string label, DateTimeOffset lastScannedUtc)
     {
-        var machineName = string.IsNullOrWhiteSpace(context.MachineName) ? Environment.MachineName : context.MachineName;
-        var username = StripDomainPrefix(context.Username);
-
         var parts = new List<string>();
         if (!string.IsNullOrWhiteSpace(policy.Prefix)) parts.Add(policy.Prefix.Trim());
-        if (policy.IncludeMachineName) parts.Add(machineName);
-        if (policy.IncludeUsername && !string.IsNullOrWhiteSpace(username)) parts.Add(username);
-        if (policy.IncludeTime) parts.Add(lastScannedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"));
+        parts.Add($"Classification: {label}");
+        if (policy.IncludeTime) parts.Add($"Last Scanned: {lastScannedUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}");
 
-        return parts.Count == 0
-            ? $"{machineName} - {lastScannedUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}"
-            : string.Join(" - ", parts);
-    }
-
-    // WMI's Win32_ComputerSystem.UserName (see InteractiveUserContextProvider) comes back as
-    // "MACHINE\username" or "DOMAIN\username" - stripped to the bare username here so the tiled
-    // text matches WatermarkWindow's Environment.UserName (which never carries a domain prefix)
-    // for a visually identical result between the live screen overlay and a stamped file.
-    private static string StripDomainPrefix(string username)
-    {
-        if (string.IsNullOrEmpty(username)) return username;
-        var separatorIndex = username.IndexOf('\\');
-        return separatorIndex >= 0 ? username[(separatorIndex + 1)..] : username;
+        return string.Join(" - ", parts);
     }
 
     // Resolves WatermarkPolicy's screen-oriented numbers into the tile layer's actual drawing

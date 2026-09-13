@@ -14,6 +14,7 @@ public sealed class DlpWorker(
     PermissionLifecycleMonitor permissionLifecycleMonitor,
     SessionAgentSupervisor sessionAgentSupervisor,
     FileInventoryScanner fileInventoryScanner,
+    UsbSnapshotCache usbSnapshotCache,
     ILogger<DlpWorker> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -50,7 +51,17 @@ public sealed class DlpWorker(
                 await permissionLifecycleMonitor.TickAsync(stoppingToken);
                 await sessionAgentSupervisor.TickAsync(stoppingToken);
 
-                if (now - lastFileInventoryScan >= TimeSpan.FromSeconds(Math.Max(5, policy.FileClassification.ScanIntervalSeconds)))
+                // While a removable drive is connected, scan more often than the configured interval
+                // (floor of 2s, matching UsbPolicy's own default PollSeconds) - narrows the window in
+                // which a file copied from USB and the drive ejected right after could be discovered
+                // only after a long wait; UsbSnapshotCache's retained snapshot (see its class comment)
+                // covers the rest of that gap even if this floor alone isn't enough. Read from the
+                // PREVIOUS tick's result (Tick() itself only runs inside fileInventoryScanner.TickAsync
+                // below) - at most one tick stale, self-correcting either way.
+                var fileInventoryScanInterval = usbSnapshotCache.IsAnyDriveCurrentlyConnected
+                    ? TimeSpan.FromSeconds(2)
+                    : TimeSpan.FromSeconds(Math.Max(5, policy.FileClassification.ScanIntervalSeconds));
+                if (now - lastFileInventoryScan >= fileInventoryScanInterval)
                 {
                     await fileInventoryScanner.TickAsync(policy, stoppingToken);
                     lastFileInventoryScan = now;

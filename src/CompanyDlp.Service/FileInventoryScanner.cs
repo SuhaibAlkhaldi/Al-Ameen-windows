@@ -24,6 +24,10 @@ public sealed class FileInventoryScanner(
     PermissionEvaluator permissionEvaluator,
     AgentIdentityProvider identityProvider,
     WatermarkEscrowStore escrowStore,
+    FileProvenanceStore provenanceStore,
+    UsbSnapshotCache usbSnapshotCache,
+    FileProtectionEngine fileProtectionEngine,
+    EncryptedFileHashStore encryptedFileHashStore,
     ILogger<FileInventoryScanner> logger)
 {
     // Per-path last-seen write time - avoids re-hashing and re-classifying every file in the
@@ -48,6 +52,21 @@ public sealed class FileInventoryScanner(
     // tier - no re-hashing, no re-reading the file) so this doesn't reintroduce the per-file I/O
     // cost the write-time fast path exists to avoid; only an actual state change triggers a rewrite.
     private readonly Dictionary<string, bool> _lastAppliedWatermarkGrantAllowed = new(StringComparer.OrdinalIgnoreCase);
+
+    // Per-content-hash "when did we first see this content this process lifetime" - deliberately
+    // hash-keyed (not path-keyed, unlike the two dictionaries above) since provenance is a property
+    // of CONTENT, not of a particular path. Used only to buffer a brand-new file's file.open-access
+    // decision by FileOpenProtectionPolicy.NewFileProvenanceBufferSeconds (default a few seconds, well
+    // under one scan tick at the default 10s interval) - gives an in-flight BrowserDownload channel
+    // report time to land in FileProvenanceStore before "no channel matched" is treated as the final
+    // answer. See ApplyAutoProtectionIfEnabled.
+    private readonly Dictionary<string, DateTimeOffset> _firstSeenHashAtUtc = new(StringComparer.OrdinalIgnoreCase);
+
+    // Per-path "was ActionKeys.FileOpenAccess allowed the last time we actually acted on this
+    // content's protection state" - same fast-path-refresh purpose as
+    // _lastAppliedWatermarkGrantAllowed above (a grant can be approved/revoked with the file's own
+    // bytes untouched, which the write-time fast path alone would never notice).
+    private readonly Dictionary<string, bool> _lastAppliedOpenAccessAllowed = new(StringComparer.OrdinalIgnoreCase);
 
     // In-memory only marker for the "Scanning" status - a classify request currently in flight for
     // this path. Never persisted: if the service restarts mid-classification, there is no in-flight
@@ -78,6 +97,12 @@ public sealed class FileInventoryScanner(
         var fileClassification = policy.FileClassification;
         if (!fileClassification.Enabled || !fileClassification.BackgroundScanEnabled) return;
 
+        // Refreshed every tick regardless of anything else below - cheap when no removable drive is
+        // connected, and this is what lets ApplyAutoProtectionIfEnabled's USB channel check work even
+        // for a drive that gets ejected before this tick reaches the file it was used to copy. See
+        // UsbSnapshotCache's class comment.
+        usbSnapshotCache.Tick();
+
         EnsureLastSeenWriteTimesBootstrapped();
 
         var context = interactiveUserContextProvider.GetActiveConsoleUser();
@@ -96,7 +121,7 @@ public sealed class FileInventoryScanner(
         // the interactive user's SID (already fetched above via GetActiveConsoleUser for
         // classification requests anyway) through the ProfileList registry key - the correct,
         // session-agnostic way for a SYSTEM-account service to find another user's profile folder.
-        var interactiveProfilePath = ResolveInteractiveUserProfilePath(context.UserSid);
+        var interactiveProfilePath = WatchedFolderPathResolver.ResolveInteractiveUserProfilePath(context.UserSid, logger);
 
         // try/finally, not a plain sequential call after the loop: every early `return` below (
         // cancellation mid-walk) must still flush whatever SaveThrottled() left sitting in memory -
@@ -110,7 +135,7 @@ public sealed class FileInventoryScanner(
             {
                 if (cancellationToken.IsCancellationRequested) return;
 
-                var expanded = ExpandWatchedFolderPath(folder, interactiveProfilePath);
+                var expanded = WatchedFolderPathResolver.ExpandWatchedFolderPath(folder, interactiveProfilePath);
                 if (!Directory.Exists(expanded)) continue;
 
                 foreach (var path in EnumerateFilesSafely(expanded))
@@ -128,44 +153,8 @@ public sealed class FileInventoryScanner(
         }
     }
 
-    // See TickAsync's comment on interactiveProfilePath for why %USERPROFILE% can't be trusted here.
-    // Only %USERPROFILE% itself gets the interactive-user substitution - any other environment
-    // variable a future WatchedFolders entry might use (rare, but the policy schema allows arbitrary
-    // strings here) still goes through the normal machine/service-account expansion, which is correct
-    // for anything that isn't specifically "this employee's own profile".
-    private static string ExpandWatchedFolderPath(string folder, string? interactiveProfilePath)
-    {
-        const string token = "%USERPROFILE%";
-        if (!string.IsNullOrEmpty(interactiveProfilePath) &&
-            folder.StartsWith(token, StringComparison.OrdinalIgnoreCase))
-        {
-            return interactiveProfilePath + folder[token.Length..];
-        }
-
-        return Environment.ExpandEnvironmentVariables(folder);
-    }
-
-    // HKLM\...\ProfileList\<SID>\ProfileImagePath is the same place Windows Explorer itself resolves
-    // a user's profile directory from - correct regardless of the account's actual folder name (which
-    // doesn't always match the username, e.g. renamed accounts or name collisions get a suffix).
-    // Returns null (not a throw) for "no interactive user right now" (locked/logged-off session) or
-    // "SID not found" - both are legitimate, common states this must degrade out of gracefully rather
-    // than blow up a whole scan tick over.
-    private string? ResolveInteractiveUserProfilePath(string? userSid)
-    {
-        if (string.IsNullOrWhiteSpace(userSid)) return null;
-        try
-        {
-            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
-                $@"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\{userSid}");
-            return key?.GetValue("ProfileImagePath") as string;
-        }
-        catch (Exception exception)
-        {
-            logger.LogDebug(exception, "Could not resolve the interactive user's profile path from SID {Sid}.", userSid);
-            return null;
-        }
-    }
+    // Watched-folder path expansion (the %USERPROFILE%-under-LocalSystem fix) now lives in
+    // WatchedFolderPathResolver, shared with DesktopAppProvenanceMonitor - see that class's comment.
 
     // Runs once, before this process's very first tick - see _lastSeenWriteTimes's comment for why.
     private void EnsureLastSeenWriteTimesBootstrapped()
@@ -204,6 +193,21 @@ public sealed class FileInventoryScanner(
 
         var normalized = FileClassificationStatusStore.NormalizePath(path);
 
+        // .dlpenc is never classified (DocumentTextExtractor.IsSupported rejects it below, same as
+        // always) - it needs its own dedicated per-tick check instead: does an active file.open-access
+        // grant now cover this ciphertext's original content, so it should be decrypted back to
+        // plaintext? Handled separately from (and BEFORE) the write-time fast path below rather than
+        // folded into the classification-oriented _lastSeenWriteTimes/statusStore tracking, since a
+        // grant can appear at any moment with these bytes completely unchanged - this must be
+        // re-evaluated every single tick the same way ReevaluateWatermarkGrantForUnchangedFile is,
+        // never skipped just because the file "looks unchanged". See ApplyAutoProtectionIfEnabled's
+        // comment for why the reverse (plaintext -> encrypted) direction lives in that method instead.
+        if (Path.GetExtension(path).Equals(".dlpenc", StringComparison.OrdinalIgnoreCase))
+        {
+            await TryAutoDecryptIfGrantedAsync(path, fullPolicy, context, cancellationToken);
+            return;
+        }
+
         if (_lastSeenWriteTimes.TryGetValue(path, out var known) && known == info.LastWriteTimeUtc)
         {
             // The content-hash fast path above only fires a rewrite on a genuine content change -
@@ -212,6 +216,7 @@ public sealed class FileInventoryScanner(
             // here, on every tick this fast path would otherwise skip entirely, so an approval takes
             // effect on its very next tick instead of waiting for the file to change some other way.
             ReevaluateWatermarkGrantForUnchangedFile(path, normalized, fullPolicy, policy, watermarkPolicy, context);
+            await ReevaluateFileOpenProtectionForUnchangedFileAsync(path, normalized, fullPolicy, context, cancellationToken);
             return;
         }
 
@@ -283,6 +288,7 @@ public sealed class FileInventoryScanner(
             var scannedAtUtc = DateTimeOffset.UtcNow;
             var (taggedPath, taggedNormalized) = ApplyFilenameTag(path, normalized, cached.Classification, policy);
             var effectiveWriteTimeUtc = ApplyContentWatermarkIfEnabled(taggedPath, cached.Classification, hash, scannedAtUtc, fullPolicy, policy, watermarkPolicy, context, info.LastWriteTimeUtc);
+            await ApplyAutoProtectionIfEnabled(taggedPath, cached.Classification, hash, fullPolicy, context, cancellationToken);
             _lastSeenWriteTimes.Remove(path);
             _lastSeenWriteTimes[taggedPath] = effectiveWriteTimeUtc;
             if (taggedNormalized != normalized) statusStore.Delete(normalized);
@@ -350,6 +356,7 @@ public sealed class FileInventoryScanner(
                 var scannedAtUtc = DateTimeOffset.UtcNow;
                 var (taggedPath, taggedNormalized) = ApplyFilenameTag(path, normalized, result.Classification, policy);
                 var effectiveWriteTimeUtc = ApplyContentWatermarkIfEnabled(taggedPath, result.Classification, hash, scannedAtUtc, fullPolicy, policy, watermarkPolicy, context, info.LastWriteTimeUtc);
+                await ApplyAutoProtectionIfEnabled(taggedPath, result.Classification, hash, fullPolicy, context, cancellationToken);
                 _lastSeenWriteTimes.Remove(path);
                 _lastSeenWriteTimes[taggedPath] = effectiveWriteTimeUtc;
                 if (taggedNormalized != normalized) statusStore.Delete(normalized);
@@ -434,6 +441,8 @@ public sealed class FileInventoryScanner(
         if (!ApplyOrRemoveWatermark(path, classification, classificationHash, scannedAtUtc, watermarkPolicy, context, allowed))
             return fallbackWriteTimeUtc;
 
+        CarryProvenanceAndClassificationForwardAfterRewrite(path, classificationHash);
+
         try
         {
             return new FileInfo(path).LastWriteTimeUtc;
@@ -442,6 +451,27 @@ public sealed class FileInventoryScanner(
         {
             logger.LogDebug(exception, "Watermarked {Path} but could not re-read its write time; using the pre-watermark timestamp.", path);
             return fallbackWriteTimeUtc;
+        }
+    }
+
+    // See FileProvenanceStore.CopyForward's and FileClassificationCache.CopyForward's comments - a
+    // watermark rewrite changes the file's SHA-256, so both the provenance record AND the cached
+    // classification written under the pre-watermark hash must be carried forward to the new one, or
+    // this content resolves back to SelfCreated (losing file.open-access protection) / shows an empty
+    // classification (confirmed live 2026-09-09 via the request-permission portal page) the next time
+    // something has to recompute the hash from scratch instead of reusing what's cached.
+    private void CarryProvenanceAndClassificationForwardAfterRewrite(string path, string preRewriteHash)
+    {
+        try
+        {
+            using var stream = File.OpenRead(path);
+            var newHash = Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+            provenanceStore.CopyForward(preRewriteHash, newHash);
+            cache.CopyForward(preRewriteHash, newHash);
+        }
+        catch (Exception exception)
+        {
+            logger.LogDebug(exception, "Could not carry the file-provenance/classification records forward for {Path} after a watermark rewrite.", path);
         }
     }
 
@@ -464,11 +494,23 @@ public sealed class FileInventoryScanner(
         if (cached is null) return; // no cached tier to evaluate against - the next real classification pass will settle this
 
         var allowed = IsFileWatermarkDisableGranted(fullPolicy, cached.Classification, hash, context);
-        if (_lastAppliedWatermarkGrantAllowed.TryGetValue(path, out var lastApplied) && lastApplied == allowed) return;
+
+        // Grant state alone isn't the only reason to redraw for PDF/images (unlike Word/PowerPoint/
+        // Excel, which ApplyOrRemoveWatermark always regenerates unconditionally) - a stale
+        // WatermarkEscrowRecord.TileFormatVersion (see ContentWatermarker.CurrentTileFormatVersion's
+        // comment) needs exactly one catch-up redraw too, even when the grant hasn't changed at all
+        // and this file would otherwise sit in the "nothing to do" branch below forever.
+        var tileFormatStale = EscrowRequiredExtensions.Contains(Path.GetExtension(path))
+            && escrowStore.TryGetByClassificationHash(hash) is { } escrow
+            && escrow.TileFormatVersion != ContentWatermarker.CurrentTileFormatVersion;
+
+        if (!tileFormatStale && _lastAppliedWatermarkGrantAllowed.TryGetValue(path, out var lastApplied) && lastApplied == allowed) return;
 
         _lastAppliedWatermarkGrantAllowed[path] = allowed;
         var scannedAtUtc = DateTimeOffset.UtcNow;
         if (!ApplyOrRemoveWatermark(path, cached.Classification, hash, scannedAtUtc, watermarkPolicy, context, allowed)) return;
+
+        CarryProvenanceAndClassificationForwardAfterRewrite(path, hash);
 
         try
         {
@@ -479,6 +521,157 @@ public sealed class FileInventoryScanner(
         catch (Exception exception)
         {
             logger.LogDebug(exception, "Updated the watermark tile state for {Path} but could not re-read its write time.", path);
+        }
+    }
+
+    // Resolves "SelfCreated" vs "Received" for one piece of content - see FileProvenanceStore's class
+    // comment for the full design. A hash already recorded wins outright (first channel to claim a
+    // hash is authoritative, never re-evaluated). Otherwise checks the USB channel directly here (a
+    // cheap in-memory lookup against UsbSnapshotCache's already-captured snapshots, no I/O) and
+    // records a match; the browser-download channel instead writes directly to FileProvenanceStore
+    // itself, out of band, the moment BrowserBridge reports a completed download (see
+    // BrowserNativeMessageRouter) - by the time this method runs, that write (if any) has either
+    // already landed or never will. No match from either channel = SelfCreated, the default.
+    private string ResolveProvenance(string contentHash)
+    {
+        var existing = provenanceStore.TryGet(contentHash);
+        if (existing is not null) return existing.Origin;
+
+        if (usbSnapshotCache.MatchesAnySnapshot(contentHash))
+        {
+            provenanceStore.MarkReceived(contentHash, FileProvenanceChannels.Usb);
+            return FileProvenanceOrigins.Received;
+        }
+
+        return FileProvenanceOrigins.SelfCreated;
+    }
+
+    // Encrypts a "Received" file that lacks an active file.open-access grant (or leaves it alone if
+    // it already has none), and does nothing at all for a "SelfCreated" file - see ActionKeys.
+    // FileOpenAccess's comment for the full design. The reverse direction (decrypting a .dlpenc back
+    // to plaintext once a grant becomes active) is NOT handled here: this method only ever sees
+    // plaintext files (DocumentTextExtractor.IsSupported already filters .dlpenc out well before
+    // ClassifyIfNeededAsync reaches this call) - see FileOpenProtectionWorker for that direction.
+    private async Task ApplyAutoProtectionIfEnabled(
+        string path, string classification, string contentHash, DlpPolicy fullPolicy, ClientContext context, CancellationToken cancellationToken)
+    {
+        var policy = fullPolicy.FileOpenProtection;
+        if (!policy.Enabled) return;
+        // Defensive guard only - DocumentTextExtractor.IsSupported already keeps a real .dlpenc from
+        // ever reaching this call; kept here in case that convention ever changes underneath this method.
+        if (Path.GetExtension(path).Equals(".dlpenc", StringComparison.OrdinalIgnoreCase)) return;
+
+        var now = DateTimeOffset.UtcNow;
+        if (!_firstSeenHashAtUtc.TryGetValue(contentHash, out var firstSeen))
+        {
+            // Genuinely new content this process lifetime - buffer the decision (see
+            // FileOpenProtectionPolicy.NewFileProvenanceBufferSeconds's comment) rather than deciding
+            // "SelfCreated" immediately; a matching BrowserDownload channel report may still be in
+            // flight. Decided for real starting next tick.
+            _firstSeenHashAtUtc[contentHash] = now;
+            return;
+        }
+        if (now - firstSeen < TimeSpan.FromSeconds(Math.Max(0, policy.NewFileProvenanceBufferSeconds))) return;
+
+        if (ResolveProvenance(contentHash) != FileProvenanceOrigins.Received) return;
+
+        var identity = identityProvider.Get();
+        var decision = permissionEvaluator.Evaluate(
+            fullPolicy, ActionKeys.FileOpenAccess, context, identity, now, fileHash: contentHash, knownClassificationTier: classification);
+        _lastAppliedOpenAccessAllowed[path] = decision.IsAllowed;
+
+        // Allowed and still plaintext (this method never runs on a .dlpenc, see above) - the steady,
+        // correct state, nothing to do. AuditOnly mode never touches the file's bytes either - it
+        // exists purely so an admin can observe how many/which files WOULD be encrypted before
+        // actually flipping EnforcementMode to Block (same rollout-safety pattern as UsbPolicy/
+        // PrintPolicy).
+        if (decision.IsAllowed || !policy.EnforcementMode.Equals("Block", StringComparison.OrdinalIgnoreCase)) return;
+
+        try
+        {
+            var result = await fileProtectionEngine.EncryptAndDeleteOriginalAsync(path, cancellationToken);
+            encryptedFileHashStore.Set(new EncryptedFileHashEntry(result.FileId, result.OriginalSha256.ToLowerInvariant(), DateTimeOffset.UtcNow, AutoProtected: true));
+            _lastAppliedOpenAccessAllowed.Remove(path);
+        }
+        catch (Exception exception)
+        {
+            // Most commonly the file is open/locked in another application right now - leave it as
+            // plaintext (the safe-for-the-user-workflow direction) and retry on a later tick, exactly
+            // like the watermark escrow flow's own "try again next time" convention.
+            logger.LogDebug(exception, "Could not auto-encrypt {Path} despite no active file.open-access grant; will retry.", path);
+        }
+    }
+
+    // The cheap re-check that runs on every tick for a file _lastSeenWriteTimes says is otherwise
+    // unchanged - mirrors ReevaluateWatermarkGrantForUnchangedFile's purpose exactly (a grant can
+    // change with the file's own bytes untouched).
+    private async Task ReevaluateFileOpenProtectionForUnchangedFileAsync(
+        string path, string normalized, DlpPolicy fullPolicy, ClientContext context, CancellationToken cancellationToken)
+    {
+        if (!fullPolicy.FileOpenProtection.Enabled) return;
+
+        var existingStatus = statusStore.TryGet(normalized);
+        if (existingStatus?.LastClassifiedHash is not { } hash) return;
+
+        var cached = cache.TryGet(hash);
+        if (cached is null) return;
+
+        await ApplyAutoProtectionIfEnabled(path, cached.Classification, hash, fullPolicy, context, cancellationToken);
+    }
+
+    // The other half of ApplyAutoProtectionIfEnabled's toggle - decrypts a .dlpenc back to plaintext
+    // the moment an active file.open-access grant covers it. Reuses FileProtectionCoordinator's exact
+    // "peek fileId -> resolve hash via EncryptedFileHashStore -> evaluate" pattern rather than
+    // duplicating it, since it's the same real question ("can this identity access this classified
+    // content right now") either flow is asking.
+    private async Task TryAutoDecryptIfGrantedAsync(string path, DlpPolicy fullPolicy, ClientContext context, CancellationToken cancellationToken)
+    {
+        if (!fullPolicy.FileOpenProtection.Enabled) return;
+
+        Guid fileId;
+        try
+        {
+            fileId = await fileProtectionEngine.PeekFileIdAsync(path, cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            logger.LogDebug(exception, "Could not read the .dlpenc header for {Path}; skipping the file.open-access check this tick.", path);
+            return;
+        }
+
+        var entry = encryptedFileHashStore.TryGet(fileId);
+        // Not one of ours (no local record at all, or a manual file.encrypt the employee ran
+        // themselves) - only ever auto-decrypt content this feature itself encrypted. See
+        // EncryptedFileHashEntry.AutoProtected's comment.
+        if (entry is not { AutoProtected: true }) return;
+
+        var classification = cache.TryGet(entry.FileHash)?.Classification ?? ClassificationTiers.VerySecret;
+        var identity = identityProvider.Get();
+        var decision = permissionEvaluator.Evaluate(
+            fullPolicy, ActionKeys.FileOpenAccess, context, identity, DateTimeOffset.UtcNow,
+            fileHash: entry.FileHash, knownClassificationTier: classification);
+        if (!decision.IsAllowed) return;
+
+        try
+        {
+            var result = await fileProtectionEngine.DecryptAsync(path, cancellationToken);
+            // DecryptAsync's own cleanup only deletes the .dlpenc when the GLOBAL
+            // FileProtectionPolicy.KeepEncryptedFileAfterDecryption policy says to (default: keeps
+            // it, for the manual self-service tool's benefit) - an auto-managed file must always end
+            // up as exactly one representation on disk regardless of that global setting, so the
+            // leftover ciphertext is removed explicitly here too.
+            if (File.Exists(path))
+            {
+                try { File.Delete(path); }
+                catch (Exception exception) { logger.LogDebug(exception, "Decrypted {Path} but could not remove the leftover .dlpenc copy.", path); }
+            }
+            _lastSeenWriteTimes.Remove(result.OutputPath);
+        }
+        catch (Exception exception)
+        {
+            // Most commonly the file is locked/in use, or the backend key-unwrap call failed - leave
+            // it encrypted (the safe default) and retry next tick.
+            logger.LogDebug(exception, "Could not auto-decrypt {Path} despite an active file.open-access grant; will retry.", path);
         }
     }
 
@@ -507,8 +700,8 @@ public sealed class FileInventoryScanner(
             // objects - no escrow needed either direction. TXT has no separate tile/corner concept;
             // its one combined header block is simply present or absent.
             return hideWatermark
-                ? ContentWatermarker.RemoveWatermarkLayers(path, classification, scannedAtUtc, context, watermarkPolicy, logger)
-                : ContentWatermarker.ApplyWatermark(path, classification, scannedAtUtc, context, watermarkPolicy, logger);
+                ? ContentWatermarker.RemoveWatermarkLayers(path, classification, scannedAtUtc, watermarkPolicy, logger)
+                : ContentWatermarker.ApplyWatermark(path, classification, scannedAtUtc, watermarkPolicy, logger);
         }
 
         // PDF/images from here on - the escrow path (see WatermarkEscrowStore's class comment).
@@ -537,10 +730,16 @@ public sealed class FileInventoryScanner(
             // right" early-return, which only ever looks at the corner text and can't otherwise
             // tell "escrow-restored" apart from "fully watermarked" (see that method's comment).
             // Images have no equivalent early-return; a normal call already always composites
-            // unconditionally.
-            var forceReapply = extension.Equals(".pdf", StringComparison.OrdinalIgnoreCase) && escrow is { WatermarkHidden: true };
-            var rewrote = ContentWatermarker.ApplyWatermark(path, classification, scannedAtUtc, context, watermarkPolicy, logger, includeTileLayer: true, includeCornerLayer: true, forceReapply: forceReapply);
+            // unconditionally. Also force it whenever this record's tile predates the current
+            // ContentWatermarker.CurrentTileFormatVersion - see that constant's comment: PDF's own
+            // early-return and images' unconditional-redraw both only ever look at whether the
+            // corner block changed, so a tile-only text change (like the 2026-09-08 one) would
+            // otherwise never reach an already-watermarked file again.
+            var tileFormatStale = escrow is not null && escrow.TileFormatVersion != ContentWatermarker.CurrentTileFormatVersion;
+            var forceReapply = (extension.Equals(".pdf", StringComparison.OrdinalIgnoreCase) && escrow is { WatermarkHidden: true }) || tileFormatStale;
+            var rewrote = ContentWatermarker.ApplyWatermark(path, classification, scannedAtUtc, watermarkPolicy, logger, includeTileLayer: true, includeCornerLayer: true, forceReapply: forceReapply);
             if (escrow is { WatermarkHidden: true }) escrowStore.MarkWatermarkHidden(escrow.EscrowId, hidden: false);
+            if (rewrote && escrow is not null) escrowStore.MarkTileFormatVersion(escrow.EscrowId, ContentWatermarker.CurrentTileFormatVersion);
             return rewrote;
         }
 

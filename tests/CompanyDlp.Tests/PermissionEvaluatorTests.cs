@@ -161,6 +161,40 @@ public sealed class PermissionEvaluatorTests
         Assert.True(publicResult.IsAllowed);
     }
 
+    // FileOpenAccess was moved out of ActionsRequiringExactTierMatch (2026-09-10, explicit product
+    // decision) - it now uses the same "this tier and anything less sensitive" widening as FilePrint
+    // and every other tier-scoped action. A Secret-tier grant to open received files also covers that
+    // employee's received Internal/Public files (Public included, since FileOpenAccess still requires
+    // an explicit grant even for Public content), but never widens upward to Very Secret.
+    [Fact]
+    public void FileOpenAccess_TierScopedGrant_AlsoCoversLessSensitiveTiers_ButNotMoreSensitive()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var policy = CreatePolicy(defaultAllowed: false);
+        policy.Permissions.Grants.Add(new PermissionGrant
+        {
+            ActionKey = ActionKeys.FileOpenAccess,
+            Allowed = true,
+            SubjectType = PermissionSubjectTypes.UserSid,
+            SubjectId = _context.UserSid,
+            Source = PermissionSources.PermanentPolicy,
+            ClassificationTier = ClassificationTiers.Secret,
+            StartsAtUtc = now.AddMinutes(-1)
+        });
+
+        var secretResult = _evaluator.Evaluate(policy, ActionKeys.FileOpenAccess, _context, _identity, now, knownClassificationTier: ClassificationTiers.Secret);
+        Assert.True(secretResult.IsAllowed);
+
+        var internalResult = _evaluator.Evaluate(policy, ActionKeys.FileOpenAccess, _context, _identity, now, knownClassificationTier: ClassificationTiers.Internal);
+        Assert.True(internalResult.IsAllowed);
+
+        var publicResult = _evaluator.Evaluate(policy, ActionKeys.FileOpenAccess, _context, _identity, now, knownClassificationTier: ClassificationTiers.Public);
+        Assert.True(publicResult.IsAllowed);
+
+        var verySecretResult = _evaluator.Evaluate(policy, ActionKeys.FileOpenAccess, _context, _identity, now, knownClassificationTier: ClassificationTiers.VerySecret);
+        Assert.False(verySecretResult.IsAllowed);
+    }
+
     private static DlpPolicy CreatePolicy(bool defaultAllowed) => new()
     {
         Permissions = new PermissionPolicy

@@ -98,10 +98,10 @@
                },
     "watermark":  {
                       "enabled":  true,
-                      "opacity":  0.72,
-                      "fontSize":  15,
-                      "horizontalSpacing":  520,
-                      "verticalSpacing":  180,
+                      "opacity":  0.18,
+                      "fontSize":  6,
+                      "horizontalSpacing":  300,
+                      "verticalSpacing":  120,
                       "prefix":  "",
                       "includeUsername":  true,
                       "includeMachineName":  true,
@@ -137,6 +137,27 @@
                            "keepEncryptedFileAfterDecryption":  true,
                            "maximumFileSizeBytes":  10737418240
                        },
+    "fileOpenProtection":  {
+                               "enabled":  true,
+                               "enforcementMode":  "Block"
+                           },
+    "desktopAppProvenance":  {
+                                 "enabled":  true,
+                                 "correlationWindowSeconds":  20,
+                                 "networkActivityCacheMaxTrackedProcesses":  2000,
+                                 "excludedProcessNames":  [
+                                                               "chrome",
+                                                               "msedge",
+                                                               "firefox",
+                                                               "brave",
+                                                               "opera",
+                                                               "opera_gx",
+                                                               "iexplore",
+                                                               "CompanyDlp.Service",
+                                                               "CompanyDlp.Desktop",
+                                                               "CompanyDlp.NativeHost"
+                                                           ]
+                             },
     "fileClassification":  {
                                "enabled":  true,
                                "provider":  "AiApi",

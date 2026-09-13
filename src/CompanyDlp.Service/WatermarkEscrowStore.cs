@@ -39,7 +39,14 @@ public sealed record WatermarkEscrowRecord(
     string? KeyId,
     string? WrappedKeyBase64,
     bool WatermarkHidden,
-    bool RestoreRequested);
+    bool RestoreRequested,
+    // Which revision of ContentWatermarker's tile-layer TEXT this PDF/image's live copy currently has
+    // baked into it (see ContentWatermarker.CurrentTileFormatVersion's comment). Defaults to 0 via
+    // JsonSerializer for every record written before this field existed - deliberately less than any
+    // real version constant, so every pre-existing PDF/image is treated as stale exactly once and
+    // gets its tile redrawn on its next scan, the same one-time "catch up" every future bump of this
+    // constant will trigger again for whichever files haven't been touched since.
+    int TileFormatVersion = 0);
 
 public sealed class WatermarkEscrowStore(PolicyStore policyStore, MachineDataProtector protector, ILogger<WatermarkEscrowStore> logger)
 {
@@ -117,6 +124,10 @@ public sealed class WatermarkEscrowStore(PolicyStore policyStore, MachineDataPro
         var record = new WatermarkEscrowRecord(
             escrowId, classificationHash, extension, livePath, DateTimeOffset.UtcNow,
             KeyWrapped: false, KeyId: null, WrappedKeyBase64: null, WatermarkHidden: false, RestoreRequested: false);
+            // TileFormatVersion left at its default (0): this snapshot is taken from the file's still-
+            // pristine (not-yet-watermarked) bytes - the caller (FileInventoryScanner) draws the actual
+            // watermark right after this returns and calls MarkTileFormatVersion once that succeeds,
+            // the one place that actually knows the tile was drawn.
 
         lock (_sync)
         {
@@ -192,6 +203,20 @@ public sealed class WatermarkEscrowStore(PolicyStore policyStore, MachineDataPro
             EnsureLoaded();
             if (!_records!.TryGetValue(escrowId, out var record)) return;
             _records[escrowId] = record with { WatermarkHidden = hidden, RestoreRequested = false };
+            Save();
+        }
+    }
+
+    // Called by FileInventoryScanner right after it actually redraws this record's live file's tile
+    // layer - see WatermarkEscrowRecord.TileFormatVersion's comment. A no-op if the record is already
+    // at this version (avoids a pointless disk write on every routine watermark redraw).
+    public void MarkTileFormatVersion(Guid escrowId, int version)
+    {
+        lock (_sync)
+        {
+            EnsureLoaded();
+            if (!_records!.TryGetValue(escrowId, out var record) || record.TileFormatVersion == version) return;
+            _records[escrowId] = record with { TileFormatVersion = version };
             Save();
         }
     }

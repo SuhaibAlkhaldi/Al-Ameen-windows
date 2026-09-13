@@ -9,7 +9,20 @@ namespace CompanyDlp.Desktop.Development;
 
 public sealed class DevelopmentSessionManager
 {
-    public const string DevelopmentExtensionId = "ndbbpeagkbfbkmgdklpphomiolnmbhhi";
+    // Must be the exact Chrome/Edge extension ID the "key" field in browser-extension\manifest.json
+    // actually produces (id = base32-ish mapping of the first 16 bytes of SHA-256(DER-encoded public
+    // key) - Chrome computes this the same way regardless of how the extension is loaded: the
+    // "protected" temp-profile flow below, or a manual "Load unpacked"). Confirmed live 2026-09-08:
+    // this constant had drifted from the manifest's actual key (a stale value from before the key
+    // was last regenerated), so every native-messaging call from EITHER loading method failed with
+    // Chrome's "Access to the specified native messaging host is forbidden." - getPolicy/getIdentity
+    // always failed, and every grant-gated decision (e.g. browser.download) silently fell back to
+    // its fail-closed default regardless of how correct the actual permission grant was. Re-verify
+    // with `node -e "const c=require('crypto');const k=Buffer.from('<manifest key>','base64');const
+    // d=c.createHash('sha256').update(k).digest().slice(0,16);console.log([...d].map(b=>String.
+    // fromCharCode(97+(b>>4))+String.fromCharCode(97+(b&15))).join(''))"` if manifest.json's "key" is
+    // ever regenerated again.
+    public const string DevelopmentExtensionId = "mldapndkkodjmkamfmhpbcfdbamefeff";
     private readonly RegistryPolicySession _registrySession = new();
     private readonly NativeHostRegistrySession _nativeHostSession = new();
     private readonly List<Process> _launched = [];

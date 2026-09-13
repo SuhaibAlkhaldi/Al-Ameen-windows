@@ -43,6 +43,13 @@ function matchesSubject(grant, identity) {
       return expected !== "" && expected === normalized(identity?.username);
     case "machinename":
       return expected !== "" && expected === normalized(identity?.machineName);
+    // See service-worker.js's identical case for the full explanation - the backend always
+    // re-maps an employee-scoped grant to SubjectType="DeviceId" before it reaches an agent,
+    // already resolved to this exact device server-side. This extension's local policy is always
+    // already scoped to this one device's own snapshot, so any DeviceId-scoped grant in it is
+    // already for this device, same as the Global case above.
+    case "deviceid":
+      return true;
     default:
       return false;
   }
@@ -223,4 +230,17 @@ api.downloads.onCreated.addListener(async (downloadItem) => {
 
   // Audit runs in the background and never delays the alert.
   void auditDownload(downloadItem, "blocked", decision);
+});
+
+// See service-worker.js's identical Chrome/Edge listener for the full comment - reports a completed
+// download's final absolute path for the file.open-access feature's FileProvenanceStore. Best-effort:
+// never affects the download itself, which has already finished by the time "complete" fires.
+api.downloads.onChanged.addListener(async (delta) => {
+  if (delta.state?.current !== "complete") return;
+  try {
+    const items = await api.downloads.search({ id: delta.id });
+    const item = items && items[0];
+    if (!item?.filename) return;
+    void sendNative({ type: "downloadCompleted", path: item.filename });
+  } catch (_) { }
 });

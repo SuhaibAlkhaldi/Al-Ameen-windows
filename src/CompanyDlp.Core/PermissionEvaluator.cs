@@ -13,16 +13,28 @@ public sealed class PermissionEvaluator(FileClassificationCache? classificationC
     // to hide the file watermark must always go through an approval, even for Public-tier content,
     // rather than silently auto-allowing Public the way most other actions do (see the fallback
     // this set opts out of, further down).
+    // FileOpenAccess joins them too - a file received from an external source needs an explicit
+    // grant to open regardless of its classification tier, Public included, per explicit product
+    // decision (unlike every other action, where a self-created file is never gated at all in the
+    // first place - see FileInventoryScanner's provenance check, which only ever calls this action
+    // for files it already determined were NOT locally created).
     private static readonly HashSet<string> ActionsRequiringGrantEvenForPublic =
-        new(StringComparer.OrdinalIgnoreCase) { ActionKeys.FilePrint, ActionKeys.FileWatermarkDisable };
+        new(StringComparer.OrdinalIgnoreCase) { ActionKeys.FilePrint, ActionKeys.FileWatermarkDisable, ActionKeys.FileOpenAccess };
 
-    // Every other tier-scoped grant (print included) uses "this tier and anything less sensitive"
-    // semantics - see MatchesFileScope's comment. FileWatermarkDisable is deliberately different by
-    // explicit product decision: an admin approving "hide the watermark on my Secret files" must
-    // NOT silently also hide it on that employee's Internal/Public files - each tier is opted into
-    // independently. Kept as its own opt-in set (mirroring ActionsRequiringGrantEvenForPublic above)
-    // rather than a per-grant flag, since this is fixed behavior for this one action, not something
-    // meant to vary per tenant/grant.
+    // Every other tier-scoped grant (print and file.open-access included) uses "this tier and
+    // anything less sensitive" semantics - see MatchesFileScope's comment. FileWatermarkDisable is
+    // the only action deliberately different, by explicit product decision: an admin approving "hide
+    // the watermark on my Secret files" must NOT silently also hide it on that employee's
+    // Internal/Public files - each tier is opted into independently. Kept as its own opt-in set
+    // (mirroring ActionsRequiringGrantEvenForPublic above) rather than a per-grant flag, since this
+    // is fixed behavior for this one action, not something meant to vary per tenant/grant.
+    // FileOpenAccess used to be exact-match here too, but was moved to the default "and below"
+    // widening by explicit product decision (2026-09-10): a grant to open received Secret files also
+    // covers that employee's received Internal/Public files, since trust in more sensitive content
+    // implies trust in less sensitive content - it just never widens upward (a Secret grant still
+    // never covers a Very Secret received file). An admin's blanket "can open anything received, any
+    // tier" grant remains an ordinary grant with BOTH FileHash and ClassificationTier left null,
+    // which MatchesFileScope treats as matching any file unconditionally.
     private static readonly HashSet<string> ActionsRequiringExactTierMatch =
         new(StringComparer.OrdinalIgnoreCase) { ActionKeys.FileWatermarkDisable };
 

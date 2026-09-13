@@ -154,6 +154,11 @@ public sealed class ProductionReadinessValidatorTests
                     [ActionKeys.UsbMobileDevice] = false,
                     [ActionKeys.SoftwareInstall] = false,
                     [ActionKeys.SoftwareExecuteUnapproved] = false,
+                    // ProductionReadinessValidator.RequireDefaultDeny lists file.print among the
+                    // actions that must be explicitly denied by default in a hardened production
+                    // policy - this fixture has to carry that entry too or the readiness check it
+                    // exercises fails on the missing key.
+                    [ActionKeys.FilePrint] = false,
                     [ActionKeys.FileEncrypt] = true,
                     [ActionKeys.FileDecrypt] = true
                 }

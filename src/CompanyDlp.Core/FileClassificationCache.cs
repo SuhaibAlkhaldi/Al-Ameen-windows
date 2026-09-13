@@ -46,6 +46,31 @@ public sealed class FileClassificationCache(PolicyStore policyStore, ILogger<Fil
         }
     }
 
+    // Content-mutating rewrites this service performs on a file AFTER it's classified (tile/corner
+    // watermarking is the only one today) change its SHA-256, so a classification cached for the
+    // pre-rewrite bytes stops matching the file's current on-disk content the moment it's watermarked -
+    // exactly FileProvenanceStore.CopyForward's reasoning (see that class's comment for the confirmed-
+    // live incident this exact bug class caused there), applied here too. Confirmed live 2026-09-09:
+    // a blocked-file-open audit event's Classification and the request-permission portal page built
+    // from it both came back empty for every auto-encrypted file (watermarked before encryption, so
+    // always mismatched) - this method existing but never being called was the root cause; see
+    // FileInventoryScanner's watermark-rewrite call site. Called right after a watermark rewrite,
+    // carrying the classification forward from the pre-watermark hash to the post-watermark one - a
+    // no-op if the old hash was never classified or the new hash already has an entry.
+    public void CopyForward(string oldFileHash, string newFileHash)
+    {
+        if (oldFileHash.Equals(newFileHash, StringComparison.OrdinalIgnoreCase)) return;
+
+        lock (_sync)
+        {
+            EnsureLoaded();
+            if (!_entries!.TryGetValue(oldFileHash, out var existing)) return;
+            if (_entries.ContainsKey(newFileHash)) return;
+            _entries[newFileHash] = existing with { FileHash = newFileHash };
+            Save();
+        }
+    }
+
     public bool BackfillCompleted
     {
         get

@@ -76,6 +76,26 @@
                  than something triggered by an alert. -->
             <Button x:Name="RequestFileWatermarkDisableButton" Content="Request to hide the file watermark" Margin="0,10,0,0" Click="RequestFileWatermarkDisable_Click"/>
             <TextBlock x:Name="FileWatermarkRequestStatusText" Foreground="#94A3B8" Margin="0,6,0,0" TextWrapping="Wrap"/>
+
+            <!-- Proactive request pattern (no specific blocked file involved) for
+                 ActionKeys.FileOpenAccess - the opposite direction from the reactive "no
+                 permission" alert shown when opening an actual received file fails (see
+                 ShellCryptoCommandRunner's request access verb). Lets an employee ask ahead of
+                 time for a whole classification tier instead of one file at a time. -->
+            <TextBlock Text="Open access for received files" FontSize="18" FontWeight="SemiBold" Margin="0,18,0,0"/>
+            <TextBlock Text="Files received from outside (browser downloads, USB) are locked until an admin grants access for their classification tier." Foreground="#94A3B8" Margin="0,6,0,0" TextWrapping="Wrap"/>
+            <!-- "Any tier" has no Tag (empty) rather than a wildcard value - the admin portal models
+                 "applies to any tier" as simply not setting a tier at all on the grant (an ordinary,
+                 unscoped grant), not a special sentinel value - see RequestFileOpenAccess_Click. -->
+            <ComboBox x:Name="FileOpenAccessTierComboBox" Margin="0,10,0,0" SelectedIndex="0">
+              <ComboBoxItem Content="Any tier" Tag=""/>
+              <ComboBoxItem Content="Public" Tag="Public"/>
+              <ComboBoxItem Content="Internal" Tag="Internal"/>
+              <ComboBoxItem Content="Secret" Tag="Secret"/>
+              <ComboBoxItem Content="Very Secret" Tag="Very_Secret"/>
+            </ComboBox>
+            <Button x:Name="RequestFileOpenAccessButton" Content="Request access for this tier" Margin="0,10,0,0" Click="RequestFileOpenAccess_Click"/>
+            <TextBlock x:Name="FileOpenAccessRequestStatusText" Foreground="#94A3B8" Margin="0,6,0,0" TextWrapping="Wrap"/>
           </StackPanel>
         </Border>
 

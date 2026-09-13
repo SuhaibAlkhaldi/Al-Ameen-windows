@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 using System.Security.AccessControl;
+using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
@@ -28,6 +29,7 @@ public sealed class PipeServer(
     UsbProtectionMonitor usbMonitor,
     RuntimeOverrideStore runtimeOverrides,
     NotificationStore notificationStore,
+    FileProvenanceStore fileProvenanceStore,
     ILogger<PipeServer> logger)
 {
     private readonly DateTimeOffset _startedAt = DateTimeOffset.UtcNow;
@@ -295,6 +297,39 @@ public sealed class PipeServer(
                     clientAccessToken,
                     () => fileProtectionCoordinator.ExecuteAsync(input, request.Context, cancellationToken));
                 return result.Success ? DlpResponse.Ok(result.Message, result) : DlpResponse.Fail(result.Message, result);
+            }
+            case DlpMessageTypes.RequestFileOpenAccess:
+            {
+                var input = request.Data?.Deserialize<FileOpenAccessRequest>(JsonDefaults.Options) ?? new FileOpenAccessRequest();
+                if (clientAccessToken is null || clientAccessToken.IsInvalid)
+                    return DlpResponse.Fail("Al-Ameen could not authenticate the Windows user for this file operation.");
+
+                var openResult = await WindowsIdentity.RunImpersonatedAsync(
+                    clientAccessToken,
+                    () => fileProtectionCoordinator.ExecuteOpenAccessAsync(input.FilePath, request.Context, cancellationToken));
+                return openResult.Success ? DlpResponse.Ok(openResult.Message, openResult) : DlpResponse.Fail(openResult.Message, openResult);
+            }
+            case DlpMessageTypes.DownloadCompleted:
+            {
+                var input = request.Data?.Deserialize<DownloadCompletedNotice>(JsonDefaults.Options) ?? new DownloadCompletedNotice();
+                if (string.IsNullOrWhiteSpace(input.Path) || !File.Exists(input.Path))
+                    return DlpResponse.Ok("No matching file to record."); // download may already have been cleaned up/moved - not an error
+
+                try
+                {
+                    string hash;
+                    await using (var stream = File.OpenRead(input.Path))
+                    {
+                        hash = Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken)).ToLowerInvariant();
+                    }
+                    fileProvenanceStore.MarkReceived(hash, FileProvenanceChannels.BrowserDownload);
+                    return DlpResponse.Ok("Download provenance recorded.");
+                }
+                catch (Exception exception)
+                {
+                    logger.LogDebug(exception, "Could not hash a reported browser download at {Path}.", input.Path);
+                    return DlpResponse.Ok("Could not hash the downloaded file; it will fall back to the USB/default provenance check.");
+                }
             }
             case DlpMessageTypes.GetOutboxStatus:
                 return DlpResponse.Ok(data: auditOutbox.GetStatus());

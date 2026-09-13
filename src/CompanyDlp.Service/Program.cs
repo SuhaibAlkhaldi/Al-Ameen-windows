@@ -84,6 +84,9 @@ builder.Services.AddSingleton<FileClassificationStatusStore>();
 builder.Services.AddSingleton<FileInventoryScanner>();
 builder.Services.AddSingleton<FileClassificationStatusResolver>();
 builder.Services.AddSingleton<WatermarkEscrowStore>();
+builder.Services.AddSingleton<FileProvenanceStore>();
+builder.Services.AddSingleton<UsbSnapshotCache>();
+builder.Services.AddSingleton<NetworkActivityCache>();
 builder.Services.AddSingleton<DictionaryRuleStore>();
 builder.Services.AddSingleton<SecurityEventFactory>();
 builder.Services.AddSingleton<AuditOutbox>();
@@ -116,6 +119,7 @@ builder.Services.AddHostedService<DlpWorker>();
 // PrintProtectionMonitor's class comment for why (a print job's cancellable window is too brief to
 // share a poll cadence meant for screen-recording detection).
 builder.Services.AddHostedService<PrintProtectionMonitor>();
+builder.Services.AddHostedService<DesktopAppProvenanceMonitor>();
 builder.Services.AddHostedService<AuditSyncWorker>();
 builder.Services.AddHostedService<WatermarkEscrowSyncWorker>();
 builder.Services.AddHostedService<PolicySyncWorker>();

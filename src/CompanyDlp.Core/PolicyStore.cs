@@ -44,6 +44,15 @@ public sealed class PolicyStore(
     // call (BackendApiClient re-reads policyStore.Get().Backend fresh on every call, no caching).
     // Preserving them here is defense in depth: it holds even if a future bug on the backend side
     // reintroduces bad hardcoded values, rather than relying on the backend always being correct.
+    //
+    // FileOpenProtection was missing from this list entirely when it was first added (same class of
+    // section as Usb/Print - the backend doesn't manage its EnforcementMode, only the local dev/prod
+    // config file does). Confirmed live 2026-09-08: TryLoadProtectedRemoteCache below sets _policy to
+    // the cached remote snapshot's Policy wholesale (which carries FileOpenProtectionPolicy's own
+    // C# default, "AuditOnly", since the backend's DTO never sends this section), and without a line
+    // here to restore it, config/policy.development.json's "enforcementMode": "Block" was silently
+    // discarded on every single service start - file.open-access never actually encrypted anything,
+    // no matter what the local file said, for as long as any remote policy had ever been cached.
     private static void PreserveLocalOnlySections(DlpPolicy target, DlpPolicy localSource)
     {
         target.Clipboard = localSource.Clipboard;
@@ -56,6 +65,11 @@ public sealed class PolicyStore(
         target.Cli = localSource.Cli;
         target.FileProtection = localSource.FileProtection;
         target.Print = localSource.Print;
+        target.FileOpenProtection = localSource.FileOpenProtection;
+        // Same bug class as FileOpenProtection above (and the same fix) - the backend doesn't model
+        // DesktopAppProvenance at all, so a forgotten entry here would silently reset it (Enabled and
+        // ExcludedProcessNames included) to C# type defaults on every remote/cached policy load.
+        target.DesktopAppProvenance = localSource.DesktopAppProvenance;
         target.FileClassification = localSource.FileClassification;
         target.Backend = localSource.Backend;
         target.Runtime = localSource.Runtime;

@@ -24,6 +24,15 @@ public static class DlpMessageTypes
     public const string ProtectFile = "protectFile";
     public const string GetOutboxStatus = "getOutboxStatus";
     public const string GetFileClassificationStatus = "getFileClassificationStatus";
+
+    // Reported by the browser extension (service-worker.js) the moment chrome.downloads reports a
+    // download's state as "complete" - final absolute path included. Feeds FileProvenanceStore's
+    // BrowserDownload channel; see ActionKeys.FileOpenAccess's comment for the full design.
+    public const string DownloadCompleted = "downloadCompleted";
+
+    // Sent by the Desktop app's --request-access CLI verb (ShellCryptoCommandRunner), reached via the
+    // .dlpenc ProgID's default "open" command - see FileProtectionCoordinator.ExecuteOpenAccessAsync.
+    public const string RequestFileOpenAccess = "requestFileOpenAccess";
 }
 
 public sealed class DlpRequest

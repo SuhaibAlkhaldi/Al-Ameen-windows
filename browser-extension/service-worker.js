@@ -108,6 +108,17 @@ function matchesSubject(grant, identity) {
     case "UserSid": return expected.toLowerCase() === (identity.userSid || "").toLowerCase();
     case "Username": return expected.toLowerCase() === (identity.username || "").toLowerCase();
     case "MachineName": return expected.toLowerCase() === (identity.machineName || "").toLowerCase();
+    // The backend (DLPManagementSystem's AgentPolicyService.BuildGrantsForDeviceAsync) always
+    // re-maps an employee-scoped grant to SubjectType="DeviceId" before it ever reaches an agent -
+    // it already resolved "which device" server-side (the employee currently assigned to THIS
+    // device) before including the grant in THIS device's policy snapshot at all. getIdentity's
+    // response never carries a deviceId to compare against locally, but that's fine: this
+    // extension's local policy (fetched via getPolicy) is always already scoped to this one
+    // device's own snapshot - any DeviceId-scoped grant appearing in it is, by construction,
+    // already for this device, exactly like the Global case above. Confirmed missing here live
+    // 2026-09-08: a fully valid, active browser.download grant never matched anything (fell
+    // through to `default: return false`), blocking every download despite a correct grant.
+    case "DeviceId": return true;
     default: return false;
   }
 }
@@ -123,10 +134,10 @@ function isGrantActive(grant, nowMs) {
 
 async function evaluatePermission(policy, actionKey, identity) {
   const nowMs = Date.now();
-  const grants = (policy?.permissions?.grants || [])
-    .map(normalizeGrant)
-    .filter((grant) => grant.actionKey === actionKey)
-    .filter((grant) => matchesSubject(grant, identity))
+  const allGrants = (policy?.permissions?.grants || []).map(normalizeGrant);
+  const sameAction = allGrants.filter((grant) => grant.actionKey === actionKey);
+  const subjectMatched = sameAction.filter((grant) => matchesSubject(grant, identity));
+  const grants = subjectMatched
     .filter((grant) => isGrantActive(grant, nowMs))
     .sort((a, b) => {
       if (b.priority !== a.priority) return b.priority - a.priority;
@@ -134,6 +145,13 @@ async function evaluatePermission(policy, actionKey, identity) {
       if (specDiff !== 0) return specDiff;
       return (parsedTime(b.createdAtUtc) ?? 0) - (parsedTime(a.createdAtUtc) ?? 0);
     });
+
+  // TEMPORARY diagnostic logging - remove once the browser.download grant-matching issue is
+  // confirmed fixed. Shows exactly where a candidate grant drops out of the pipeline. Stringified
+  // (not passed as live objects) so the full content survives a copy-paste out of a collapsed
+  // console tree.
+  console.log("[CompanyDlp DIAG] evaluatePermission actionKey=" + actionKey + " identity=" + JSON.stringify(identity));
+  console.log("[CompanyDlp DIAG] allGrants=" + JSON.stringify(allGrants, null, 2));
 
   const selected = grants[0];
   if (selected) {
@@ -160,7 +178,12 @@ async function getDownloadDecision() {
     sendNative({ type: "getPolicy" })
   ]);
 
+  // TEMPORARY diagnostic logging - remove once the browser.download grant-matching issue is
+  // confirmed fixed.
+  console.log("[CompanyDlp DIAG] getDownloadDecision native responses", { identityResponse, policyResponse });
+
   if (!policyResponse?.success || !policyResponse.data) {
+    console.log("[CompanyDlp DIAG] policy fetch failed - defaulting to deny", policyResponse);
     return { allowed: false, reasonCode: "PolicyUnavailable", grantId: null };
   }
 
@@ -564,4 +587,21 @@ async function handleCreatedDownload(downloadItem) {
 }
 chrome.downloads.onCreated.addListener((downloadItem) => {
   void handleCreatedDownload(downloadItem);
+});
+
+// Reports a completed download's final absolute path to the native host, which relays it to
+// CompanyDlp.Service to record as "received from outside" for the file.open-access feature (see
+// FileProvenanceStore). Deliberately separate from handleCreatedDownload above (which only ever
+// decides allow/cancel and never learns the FINAL path - at onCreated time, downloadItem.filename is
+// still the browser's suggested path, not guaranteed final, and a blocked download is cancelled
+// before reaching "complete" anyway, correctly never reporting a path for it). Best-effort only: a
+// failure here never affects the download itself, which has already finished by this point.
+chrome.downloads.onChanged.addListener((delta) => {
+  if (delta.state?.current !== "complete") return;
+  chrome.downloads.search({ id: delta.id }, (items) => {
+    void chrome.runtime.lastError;
+    const item = items && items[0];
+    if (!item?.filename) return;
+    void sendNative({ type: "downloadCompleted", path: item.filename });
+  });
 });

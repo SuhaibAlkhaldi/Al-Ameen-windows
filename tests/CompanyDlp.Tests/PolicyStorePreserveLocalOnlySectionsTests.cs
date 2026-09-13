@@ -112,4 +112,27 @@ public sealed class PolicyStorePreserveLocalOnlySectionsTests
         Assert.Equal(originalBackendBaseUrl, policyAfter.Backend.BaseUrl);
         Assert.Equal(2, policyStore.CurrentRemoteVersion);
     }
+
+    // Regression test for the exact bug class this file exists to prevent, applied to the newest
+    // LocalOnly section (DesktopAppProvenance) - see PolicyStore.PreserveLocalOnlySections's comment on
+    // that line. A remote snapshot (which never models this section at all, so it always arrives at its
+    // C# type defaults - Enabled=false, an empty ExcludedProcessNames) must not be allowed to silently
+    // reset a locally-enabled DesktopAppProvenance channel back to disabled.
+    [Fact]
+    public void ApplyRemoteSnapshot_DoesNotResetLocallyEnabledDesktopAppProvenance()
+    {
+        var policyStore = NewPolicyStore();
+
+        // Simulate an admin/technician having turned this on locally, with a custom exclusion added.
+        var localPolicy = policyStore.Get();
+        localPolicy.DesktopAppProvenance.Enabled = true;
+        localPolicy.DesktopAppProvenance.ExcludedProcessNames.Add("SomeCorporateVpnClient");
+
+        var snapshot = BuildSnapshotDifferingInBackendAndRuntime(localPolicy, version: 1);
+        policyStore.ApplyRemoteSnapshot(snapshot);
+
+        var policyAfter = policyStore.Get();
+        Assert.True(policyAfter.DesktopAppProvenance.Enabled);
+        Assert.Contains("SomeCorporateVpnClient", policyAfter.DesktopAppProvenance.ExcludedProcessNames);
+    }
 }

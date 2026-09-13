@@ -117,6 +117,18 @@ public static class BrowserNativeMessageRouter
             return await SendPipeAsync(DlpMessageTypes.Audit, auditEvent, cancellationToken);
         }
 
+        // Reported once chrome.downloads confirms a download reached state "complete" - see
+        // service-worker.js's onChanged listener. Feeds FileProvenanceStore's BrowserDownload
+        // channel (ActionKeys.FileOpenAccess's comment has the full design); best-effort, so any
+        // failure here should never surface as an error the extension needs to handle specially.
+        if (type.Equals("downloadCompleted", StringComparison.OrdinalIgnoreCase))
+        {
+            return await SendPipeAsync(DlpMessageTypes.DownloadCompleted, new DownloadCompletedNotice
+            {
+                Path = ReadString(message, "path", "")
+            }, cancellationToken);
+        }
+
         return new { success = false, message = $"Unknown native message type: {type}" };
     }
 

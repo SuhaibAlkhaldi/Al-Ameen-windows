@@ -304,6 +304,39 @@ public partial class MainWindow : Window
         }
     }
 
+    // Proactive request pattern for ActionKeys.FileOpenAccess (no specific file involved) - the
+    // employee picks a classification tier ahead of time. See MainWindow.xaml's comment for how this
+    // differs from the reactive "no permission" alert shown by ShellCryptoCommandRunner's
+    // --request-access verb, and RequestFileWatermarkDisable_Click just above for the identical deep
+    // link convention this mirrors.
+    private async void RequestFileOpenAccess_Click(object sender, RoutedEventArgs e)
+    {
+        if (_policy is null) await RefreshStatusAsync();
+        var portalBaseUrl = _policy?.FileClassification.PortalBaseUrl;
+        if (string.IsNullOrWhiteSpace(portalBaseUrl))
+        {
+            FileOpenAccessRequestStatusText.Text = "The admin portal URL is not configured in this policy.";
+            return;
+        }
+
+        // Empty Tag ("Any tier") means don't send a tier param at all - the admin portal's request
+        // form defaults to an ungated (any-tier) request when none is given, matching how an
+        // unscoped grant works on the approval side (see MainWindow.xaml's comment on the ComboBox).
+        var tier = (FileOpenAccessTierComboBox.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Tag as string ?? "";
+        var url = $"{portalBaseUrl.TrimEnd('/')}/permission-requests/new" +
+            $"?actionKey={Uri.EscapeDataString(ActionKeys.FileOpenAccess)}" +
+            (string.IsNullOrEmpty(tier) ? "" : $"&tier={Uri.EscapeDataString(tier)}");
+        try
+        {
+            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+            FileOpenAccessRequestStatusText.Text = "Opened the admin portal - submit your request there.";
+        }
+        catch (Exception exception)
+        {
+            FileOpenAccessRequestStatusText.Text = $"Could not open the admin portal: {exception.Message}";
+        }
+    }
+
     private async void ReloadPolicy_Click(object sender, RoutedEventArgs e)
     {
         var response = await _pipeClient.SendAsync(DlpMessageTypes.ReloadPolicy);

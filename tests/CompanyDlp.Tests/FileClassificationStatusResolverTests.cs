@@ -57,6 +57,10 @@ public sealed class FileClassificationStatusResolverTests : IDisposable
             permissionEvaluator: null!,
             identityProvider: null!,
             escrowStore: null!,
+            provenanceStore: null!,
+            usbSnapshotCache: null!,
+            fileProtectionEngine: null!,
+            encryptedFileHashStore: null!,
             NullLogger<FileInventoryScanner>.Instance);
 
         // engine/encryptedFileHashStore are only touched by ResolveEncryptedAsync's .dlpenc branch -

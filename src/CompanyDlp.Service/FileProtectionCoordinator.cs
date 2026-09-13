@@ -323,4 +323,156 @@ public sealed class FileProtectionCoordinator(
             logger.LogDebug(statusException, "Could not update the display-only classification status for {Path}.", fullPath);
         }
     }
+
+    // Backs the .dlpenc ProgID's default "open" command (see ShellCryptoCommandRunner's
+    // --request-access verb) - the front door for BOTH kinds of .dlpenc a user might double-click:
+    //   - Auto-protected by FileInventoryScanner (ActionKeys.FileOpenAccess): gated by an admin grant
+    //     for the file's classification tier/hash - see ActionKeys.FileOpenAccess's comment.
+    //   - Manually encrypted by the employee themselves via the self-service Encrypt tool
+    //     (ActionKeys.FileDecrypt, default-allow): this is the SAME gate the existing --decrypt verb
+    //     already uses, just reached through double-click now instead of only the right-click menu -
+    //     a real improvement (double-click on .dlpenc did nothing at all before this feature), not a
+    //     new restriction, since FileDecrypt's default policy is unchanged by any of this.
+    // Which of the two applies is resolved from EncryptedFileHashEntry.AutoProtected - never guessed.
+    public async Task<FileOpenAccessResponse> ExecuteOpenAccessAsync(
+        string filePath, ClientContext context, CancellationToken cancellationToken)
+    {
+        var correlationId = Guid.NewGuid();
+        string fullPath;
+        try
+        {
+            fullPath = Path.GetFullPath(filePath);
+        }
+        catch (Exception exception)
+        {
+            return new FileOpenAccessResponse { CorrelationId = correlationId, Success = false, ErrorCode = "InvalidPath", Message = exception.Message };
+        }
+
+        if (!File.Exists(fullPath) || !fullPath.EndsWith(".dlpenc", StringComparison.OrdinalIgnoreCase))
+            return new FileOpenAccessResponse { CorrelationId = correlationId, Success = false, ErrorCode = "NotAnEncryptedFile", Message = "The selected file is not a Company DLP encrypted file." };
+
+        Guid fileId;
+        try
+        {
+            fileId = await engine.PeekFileIdAsync(fullPath, cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            return new FileOpenAccessResponse { CorrelationId = correlationId, Success = false, ErrorCode = "InvalidEncryptedFile", Message = exception.Message };
+        }
+
+        var localEntry = encryptedFileHashStore.TryGet(fileId);
+        var isAutoProtected = localEntry is { AutoProtected: true };
+        var actionKey = isAutoProtected ? ActionKeys.FileOpenAccess : ActionKeys.FileDecrypt;
+        // Same fail-closed-on-cache-miss convention as the existing --decrypt path (see ExecuteAsync's
+        // own comment on decryptFileHash) - never evaluated as "no classification context" and
+        // silently allowed.
+        var fileHash = localEntry?.FileHash ?? EncryptedFileHashStore.UnresolvedClassificationSentinel(fileId);
+        var classification = localEntry is not null ? classificationCache.TryGet(localEntry.FileHash)?.Classification ?? "" : "";
+        var fileName = Path.GetFileName(fullPath);
+        // Confirmed live 2026-09-09: this was never populated below, so the request-permission portal
+        // page's "Blocked File" section always showed a size of 0 for a file blocked through this path
+        // (unlike browser.upload/print, which do set it). The .dlpenc file's own on-disk size, not the
+        // original plaintext size - fullPath is already confirmed to exist above.
+        long? sizeBytes;
+        try { sizeBytes = new FileInfo(fullPath).Length; }
+        catch { sizeBytes = null; }
+
+        var decision = permissionEvaluator.Evaluate(
+            policyStore.Get(), actionKey, context, identityProvider.Get(), DateTimeOffset.UtcNow, fileHash);
+
+        if (!decision.IsAllowed)
+        {
+            await auditLogger.WriteAsync(new AuditEvent
+            {
+                CorrelationId = correlationId,
+                ActionKey = actionKey,
+                EventType = "FileOpenBlocked",
+                Action = "open-request",
+                Result = "blocked",
+                ReasonCode = decision.ReasonCode,
+                PermissionGrantId = decision.PermissionGrantId,
+                ResourceName = fileName,
+                ResourceExtension = ".dlpenc",
+                ResourceSha256 = localEntry?.FileHash ?? "",
+                ResourceClassification = classification,
+                ResourceSizeBytes = sizeBytes,
+                SourceProcessName = context.ClientName
+            }, context, cancellationToken);
+
+            return new FileOpenAccessResponse
+            {
+                CorrelationId = correlationId,
+                Success = false,
+                ErrorCode = "PermissionDenied",
+                Message = "You don't have permission to open this file yet.",
+                Classification = classification,
+                FileName = fileName
+            };
+        }
+
+        var gate = _fileLocks.GetOrAdd(fullPath, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            var result = await engine.DecryptAsync(fullPath, cancellationToken);
+
+            // Same "auto-managed files always end up as exactly one representation on disk" reasoning
+            // as FileInventoryScanner.TryAutoDecryptIfGrantedAsync - DecryptAsync's own cleanup only
+            // deletes the .dlpenc when the GLOBAL FileProtectionPolicy.KeepEncryptedFileAfterDecryption
+            // setting says to, which defaults to keeping it (for the manual tool's benefit). A manually
+            // encrypted file (isAutoProtected false) is left exactly as that global policy dictates -
+            // this is the employee's own file, encrypted through their own manual tool, and this open
+            // path must not silently change that tool's documented behavior.
+            if (isAutoProtected && File.Exists(fullPath))
+            {
+                try { File.Delete(fullPath); }
+                catch (Exception exception) { logger.LogDebug(exception, "Decrypted {Path} but could not remove the leftover .dlpenc copy.", fullPath); }
+            }
+
+            await auditLogger.WriteAsync(new AuditEvent
+            {
+                CorrelationId = correlationId,
+                ActionKey = actionKey,
+                EventType = "FileOpenAllowed",
+                Action = "open-request",
+                Result = "succeeded",
+                ReasonCode = decision.ReasonCode,
+                PermissionGrantId = decision.PermissionGrantId,
+                ResourceName = fileName,
+                ResourceExtension = ".dlpenc",
+                ResourceSha256 = localEntry?.FileHash ?? "",
+                ResourceClassification = classification,
+                ResourceSizeBytes = sizeBytes,
+                SourceProcessName = context.ClientName
+            }, context, cancellationToken);
+
+            return new FileOpenAccessResponse
+            {
+                CorrelationId = correlationId,
+                Success = true,
+                OutputPath = result.OutputPath,
+                Message = "The file was decrypted successfully.",
+                Classification = classification,
+                FileName = Path.GetFileName(result.OutputPath)
+            };
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(exception, "Could not decrypt {Path} despite an allowed open-access decision.", fullPath);
+            return new FileOpenAccessResponse
+            {
+                CorrelationId = correlationId,
+                Success = false,
+                ErrorCode = exception.GetType().Name,
+                Message = exception.Message,
+                Classification = classification,
+                FileName = fileName
+            };
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
 }

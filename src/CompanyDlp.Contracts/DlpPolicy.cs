@@ -15,6 +15,8 @@ public sealed class DlpPolicy
     public CliPolicy Cli { get; set; } = new();
     public FileProtectionPolicy FileProtection { get; set; } = new();
     public PrintPolicy Print { get; set; } = new();
+    public FileOpenProtectionPolicy FileOpenProtection { get; set; } = new();
+    public DesktopAppProvenancePolicy DesktopAppProvenance { get; set; } = new();
     public FileClassificationPolicy FileClassification { get; set; } = new();
     public BackendPolicy Backend { get; set; } = new();
     public PermissionPolicy Permissions { get; set; } = new();
@@ -216,4 +218,75 @@ public sealed class PrintPolicy
 {
     public bool Enabled { get; set; } = true;
     public string EnforcementMode { get; set; } = "AuditOnly";
+}
+
+// Gates ActionKeys.FileOpenAccess - automatically encrypting/decrypting a classified file received
+// from an external source (see FileProvenanceStore) based on whether an admin grant currently covers
+// it, enforced by FileInventoryScanner. AuditOnly (the default) lets an admin observe how many/which
+// files would be affected before actually locking anything - same rollout-safety pattern as
+// UsbPolicy/PrintPolicy's own EnforcementMode.
+public sealed class FileOpenProtectionPolicy
+{
+    public bool Enabled { get; set; } = true;
+    public string EnforcementMode { get; set; } = "AuditOnly";
+
+    // How long (minutes) a USB content snapshot is kept in UsbSnapshotCache after the drive was last
+    // seen connected, so a file copied and the drive ejected before the next scan tick still matches.
+    public int UsbSnapshotRetentionMinutes { get; set; } = 10;
+
+    // Per-drive caps on the USB snapshot walk (UsbSnapshotCache) - bounds worst-case cost on a large
+    // removable drive; a drive exceeding either cap is snapshotted only up to the cap (files beyond it
+    // simply won't be matchable against, falling back to the default "self-created" assumption).
+    public int UsbSnapshotMaxFiles { get; set; } = 5000;
+    public long UsbSnapshotMaxTotalBytes { get; set; } = 2L * 1024 * 1024 * 1024;
+
+    // How long (seconds) FileInventoryScanner waits after first discovering a new file before
+    // deciding its provenance - gives an in-flight BrowserDownload/USB signal time to land before the
+    // "no matching channel -> self-created" default is applied. See FileProvenanceStore.
+    public int NewFileProvenanceBufferSeconds { get; set; } = 3;
+}
+
+// Gates the file.open-access "desktop app" channel (FileProvenanceChannels.DesktopApp) - detecting a
+// file that landed via some desktop application (Outlook, Teams, or any other, deliberately not
+// app-specific) receiving it from the network, rather than a browser download or USB copy (the two
+// channels this feature originally shipped with). Enforced by DesktopAppProvenanceMonitor.
+//
+// Off by default, unlike UsbPolicy/BrowserPolicy which have no such switch for their own channels -
+// two reasons. First, this is the first feature in the agent with an external NuGet dependency
+// (Microsoft.Diagnostics.Tracing.TraceEvent) and a brand-new correlation heuristic, so an admin opts
+// in deliberately rather than it silently affecting file.open-access decisions the moment this version
+// deploys. Second, and more fundamentally: unlike the other two channels, this one cannot attribute a
+// newly-written file to the specific process that wrote it - Windows only exposes that as a real-time
+// kernel-level file-close event (Microsoft-Windows-Kernel-File), which a Phase-0 spike against this
+// exact agent (confirmed live 2026-09-09) found does not reliably fire through a normal, isolated ETW
+// session; the only alternative Windows offers is the classic single-consumer-per-machine "NT Kernel
+// Logger", which risks starving any other security/monitoring tool on the device that also needs it -
+// unacceptable for a background DLP agent to gamble with. So detection here instead pairs a plain
+// FileSystemWatcher on FileClassification.WatchedFolders (tells us WHEN a file appeared/stabilized,
+// no process attribution) with the network side of the same original ETW plan, which the same spike
+// confirmed DOES work reliably as a normal isolated session (Microsoft-Windows-Kernel-Network) - see
+// NetworkActivityCache. A file is attributed to a process only when EXACTLY ONE non-excluded process
+// had inbound network activity within CorrelationWindowSeconds of the file appearing
+// (NetworkActivityCache.TryGetSoleRecentlyActiveProcessId); zero or multiple candidates is treated as
+// unattributable and the file is left SelfCreated by default rather than guessed at - a missed
+// detection here is far cheaper than wrongly auto-encrypting a user's own file.
+public sealed class DesktopAppProvenancePolicy
+{
+    public bool Enabled { get; set; }
+    public int CorrelationWindowSeconds { get; set; } = 20;
+
+    // How many distinct process IDs NetworkActivityCache keeps timestamps for at once - bounds worst-case
+    // memory on a busy machine; oldest entries are evicted first once this cap is hit.
+    public int NetworkActivityCacheMaxTrackedProcesses { get; set; } = 2000;
+
+    // Processes never attributed a file to, regardless of network activity. Browsers are excluded
+    // because a browser download is already covered, exactly and more directly, by
+    // FileProvenanceChannels.BrowserDownload - this channel must not double-report (or, worse, race)
+    // the same file. CompanyDlp's own processes are excluded so this monitor can never attribute a file
+    // to itself (e.g. the watermark escrow store's own temp-file writes touching a watched folder).
+    public List<string> ExcludedProcessNames { get; set; } =
+    [
+        "chrome", "msedge", "firefox", "brave", "opera", "opera_gx", "iexplore",
+        "CompanyDlp.Service", "CompanyDlp.Desktop", "CompanyDlp.NativeHost"
+    ];
 }

@@ -43,4 +43,41 @@ New-ItemProperty $decryptKey -Name "Icon" -Value $resolvedDesktop -PropertyType 
 New-ItemProperty $decryptKey -Name "Position" -Value "Top" -PropertyType String -Force | Out-Null
 Set-Item $decryptCommandKey -Value ($commandPrefix + ' --decrypt "%1"')
 
+# .dlpenc ProgID + default "open" command - see register-development-context-menu.ps1's identical
+# block for the full comment on why this exists (routes a double-clicked .dlpenc through
+# FileProtectionCoordinator.ExecuteOpenAccessAsync instead of Explorer's file-picker prompt). Uses
+# the raw .NET Registry API (not New-Item/Set-Item) for the same reason the Encrypt key above does -
+# these two literal key names don't contain "*" so the wildcard-expansion hang this comment block
+# warns about doesn't apply here, but staying consistent avoids re-litigating that risk per key.
+$progIdName = 'CompanyDlp.EncryptedFile'
+
+$extensionRegKey = [Microsoft.Win32.Registry]::LocalMachine.CreateSubKey('Software\Classes\.dlpenc')
+try {
+    $extensionRegKey.SetValue('', $progIdName, [Microsoft.Win32.RegistryValueKind]::String)
+} finally {
+    $extensionRegKey.Dispose()
+}
+
+$progIdRegKey = [Microsoft.Win32.Registry]::LocalMachine.CreateSubKey("Software\Classes\$progIdName")
+try {
+    $progIdRegKey.SetValue('', 'Company DLP Encrypted File', [Microsoft.Win32.RegistryValueKind]::String)
+
+    $progIdIconRegKey = $progIdRegKey.CreateSubKey('DefaultIcon')
+    try {
+        $progIdIconRegKey.SetValue('', $resolvedDesktop, [Microsoft.Win32.RegistryValueKind]::String)
+    } finally {
+        $progIdIconRegKey.Dispose()
+    }
+
+    $openCommandRegKey = $progIdRegKey.CreateSubKey('shell\open\command')
+    try {
+        $openCommandRegKey.SetValue('', $commandPrefix + ' --request-access "%1"', [Microsoft.Win32.RegistryValueKind]::String)
+    } finally {
+        $openCommandRegKey.Dispose()
+    }
+} finally {
+    $progIdRegKey.Dispose()
+}
+
 Write-Host "Production File Explorer context-menu actions registered for all users." -ForegroundColor Green
+Write-Host "Double-clicking a .dlpenc file now routes through file.open-access instead of doing nothing." -ForegroundColor DarkGray
