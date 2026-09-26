@@ -135,4 +135,25 @@ public sealed class PolicyStorePreserveLocalOnlySectionsTests
         Assert.True(policyAfter.DesktopAppProvenance.Enabled);
         Assert.Contains("SomeCorporateVpnClient", policyAfter.DesktopAppProvenance.ExcludedProcessNames);
     }
+
+    // Same regression, one section newer still (FileInventorySync, File Inventory Report feature) - see
+    // PolicyStore.PreserveLocalOnlySections's comment on that line ("third time this codebase has hit
+    // it"). Unlike DesktopAppProvenance this section defaults Enabled=true, so the test instead proves a
+    // locally-customized BatchSize survives rather than getting silently reset to the C# default (200).
+    [Fact]
+    public void ApplyRemoteSnapshot_DoesNotResetLocallyCustomizedFileInventorySync()
+    {
+        var policyStore = NewPolicyStore();
+
+        var localPolicy = policyStore.Get();
+        localPolicy.FileInventorySync.BatchSize = 500;
+        localPolicy.FileInventorySync.Enabled = false;
+
+        var snapshot = BuildSnapshotDifferingInBackendAndRuntime(localPolicy, version: 1);
+        policyStore.ApplyRemoteSnapshot(snapshot);
+
+        var policyAfter = policyStore.Get();
+        Assert.Equal(500, policyAfter.FileInventorySync.BatchSize);
+        Assert.False(policyAfter.FileInventorySync.Enabled);
+    }
 }

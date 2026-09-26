@@ -71,6 +71,11 @@ public sealed class PolicyStore(
         // ExcludedProcessNames included) to C# type defaults on every remote/cached policy load.
         target.DesktopAppProvenance = localSource.DesktopAppProvenance;
         target.FileClassification = localSource.FileClassification;
+        // Same bug class again (third time this codebase has hit it - FileOpenProtection, then
+        // DesktopAppProvenance, now this) - the backend doesn't model FileInventorySync either, so a
+        // forgotten entry here would silently reset BatchSize/IncrementalSyncSeconds/etc. to C# type
+        // defaults on every remote/cached policy load.
+        target.FileInventorySync = localSource.FileInventorySync;
         target.Backend = localSource.Backend;
         target.Runtime = localSource.Runtime;
     }

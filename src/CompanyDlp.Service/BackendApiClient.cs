@@ -19,6 +19,16 @@ public sealed class BackendApiClient(
             request,
             cancellationToken);
 
+    public Task<AgentFileInventoryBatchResponse> SendFileInventoryBatchAsync(
+        AgentFileInventoryBatchRequest request,
+        CancellationToken cancellationToken) =>
+        SendJsonAsync<AgentFileInventoryBatchRequest, AgentFileInventoryBatchResponse>(
+            HttpMethod.Post,
+            policyStore.Get().FileInventorySync.BackendPath,
+            request,
+            cancellationToken,
+            policyStore.Get().FileInventorySync.TimeoutSeconds);
+
     public Task<AgentHeartbeatResponse> SendHeartbeatAsync(
         AgentHeartbeatRequest request,
         CancellationToken cancellationToken) =>

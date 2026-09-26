@@ -171,6 +171,14 @@
                                "contentWatermarkingEnabled":  true,
                                "portalBaseUrl":  "http://localhost:4200"
                            },
+    "fileInventorySync":  {
+                              "enabled":  true,
+                              "batchSize":  200,
+                              "incrementalSyncSeconds":  15,
+                              "reconciliationScanIntervalMinutes":  60,
+                              "backendPath":  "api/v1/agent/file-inventory/batch",
+                              "timeoutSeconds":  30
+                          },
     "backend":  {
                     "enabled":  true,
                     "tenantId":  "f413df6c-9599-47aa-b8ab-32b0d3731f14",

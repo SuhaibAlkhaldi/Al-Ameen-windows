@@ -56,6 +56,66 @@ public sealed class RejectedAuditEvent
     public bool Retryable { get; set; }
 }
 
+// Mirrors DLPManagementSystem.DTO.AgentFileInventory's constants exactly - string values cross the
+// wire as plain JSON strings, so these must stay byte-for-byte identical on both sides.
+public static class FileInventorySyncKinds
+{
+    public const string InitialFull = "InitialFull";
+    public const string Incremental = "Incremental";
+    public const string Reconciliation = "Reconciliation";
+}
+
+public static class FileInventoryChangeTypes
+{
+    public const string Created = "Created";
+    public const string Modified = "Modified";
+    public const string Renamed = "Renamed";
+    public const string Deleted = "Deleted";
+}
+
+public sealed class AgentFileInventoryBatchRequest
+{
+    public Guid TenantId { get; set; }
+    public Guid DeviceId { get; set; }
+    public string AgentVersion { get; set; } = "1.0.0";
+    public string SyncKind { get; set; } = FileInventorySyncKinds.Incremental;
+    public List<FileInventoryChangeEnvelope> Changes { get; set; } = [];
+}
+
+public sealed class FileInventoryChangeEnvelope
+{
+    public Guid ChangeId { get; set; }
+    public string ChangeType { get; set; } = "";
+    public string FilePath { get; set; } = "";
+    public string? OldFilePath { get; set; }
+    public string? FileHash { get; set; }
+
+    // Optional - overrides the extension the backend would otherwise derive from FilePath's literal
+    // suffix. Set for an encrypted .dlpenc file, whose own path suffix is never its real type - see
+    // FileInventoryContentResolver.ResolveEncryptedAsync, which resolves the real underlying
+    // extension via the fileId -> original-hash chain.
+    public string? Extension { get; set; }
+
+    public long? SizeBytes { get; set; }
+    public string? ClassificationTier { get; set; }
+    public string? Provenance { get; set; }
+    public bool? IsProtected { get; set; }
+    public DateTimeOffset OccurredAtUtc { get; set; }
+}
+
+public sealed class AgentFileInventoryBatchResponse
+{
+    public List<Guid> AcceptedChangeIds { get; set; } = [];
+    public List<RejectedFileInventoryChange> RejectedChanges { get; set; } = [];
+}
+
+public sealed class RejectedFileInventoryChange
+{
+    public Guid ChangeId { get; set; }
+    public string ReasonCode { get; set; } = "";
+    public bool Retryable { get; set; }
+}
+
 public sealed class AgentHeartbeatRequest
 {
     public Guid TenantId { get; set; }

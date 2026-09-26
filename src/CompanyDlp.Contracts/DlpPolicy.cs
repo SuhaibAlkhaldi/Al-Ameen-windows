@@ -18,6 +18,7 @@ public sealed class DlpPolicy
     public FileOpenProtectionPolicy FileOpenProtection { get; set; } = new();
     public DesktopAppProvenancePolicy DesktopAppProvenance { get; set; } = new();
     public FileClassificationPolicy FileClassification { get; set; } = new();
+    public FileInventorySyncPolicy FileInventorySync { get; set; } = new();
     public BackendPolicy Backend { get; set; } = new();
     public PermissionPolicy Permissions { get; set; } = new();
     public List<SensitiveRule> SensitiveRules { get; set; } = [];
@@ -289,4 +290,22 @@ public sealed class DesktopAppProvenancePolicy
         "chrome", "msedge", "firefox", "brave", "opera", "opera_gx", "iexplore",
         "CompanyDlp.Service", "CompanyDlp.Desktop", "CompanyDlp.NativeHost"
     ];
+}
+
+// File Inventory Report feature: syncs a current-state view of every file under
+// FileClassification.WatchedFolders to the backend's FileInventoryRecords table, via three
+// mechanisms (see FileInventorySyncWorker): an Initial Full Sync (once, on first run),
+// Incremental Sync (FileInventoryChangeWatcher's FileSystemWatcher-detected changes, drained from
+// FileInventoryOutbox), and a Periodic Reconciliation Scan (fallback full walk + diff, catches drift
+// from e.g. the agent being offline when a change happened). On by default - unlike
+// DesktopAppProvenance, this has no heuristic/guessing component and no new external dependency, it's
+// pure "report what FileClassification already knows" plumbing.
+public sealed class FileInventorySyncPolicy
+{
+    public bool Enabled { get; set; } = true;
+    public int BatchSize { get; set; } = 200;
+    public int IncrementalSyncSeconds { get; set; } = 15;
+    public int ReconciliationScanIntervalMinutes { get; set; } = 60;
+    public string BackendPath { get; set; } = "api/v1/agent/file-inventory/batch";
+    public int TimeoutSeconds { get; set; } = 30;
 }

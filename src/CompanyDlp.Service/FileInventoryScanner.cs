@@ -138,7 +138,7 @@ public sealed class FileInventoryScanner(
                 var expanded = WatchedFolderPathResolver.ExpandWatchedFolderPath(folder, interactiveProfilePath);
                 if (!Directory.Exists(expanded)) continue;
 
-                foreach (var path in EnumerateFilesSafely(expanded))
+                foreach (var path in WatchedFolderEnumerator.EnumerateFilesSafely(expanded, logger))
                 {
                     if (cancellationToken.IsCancellationRequested) return;
                     await ClassifyIfNeededAsync(path, policy, fileClassification, policy.Watermark, context, cancellationToken);
@@ -812,62 +812,9 @@ public sealed class FileInventoryScanner(
 
     // These folder names hold library/tooling/build-output files that are never user content and
     // don't need classification. Originally this only excluded node_modules; extended 2026-08-26
-    // after a Desktop containing a full dev repo (source control internals, multiple bin/obj build
-    // outputs, a Visual Studio cache folder) put roughly 950,000 files under one watched folder,
-    // burying the user's own documents behind an enormous, permanently-growing pile of files that
-    // could never be anything but Unsupported. The extension pre-check above (see
-    // DocumentTextExtractor.IsSupported) already makes each individual rejection cheap, but skipping
-    // these directories entirely also avoids the per-file FileInfo/stat cost and keeps a single tick
-    // from taking hours just to walk the tree.
-    private static readonly HashSet<string> ExcludedDirectoryNames = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "node_modules",
-        ".git",
-        "bin",
-        "obj",
-        ".vs",
-        "dist",
-        "build"
-    };
-
-    private static bool IsInsideExcludedDirectory(string path)
-    {
-        return path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-            .Any(segment => ExcludedDirectoryNames.Contains(segment));
-    }
-
-    private IEnumerable<string> EnumerateFilesSafely(string root)
-    {
-        IEnumerator<string>? enumerator = null;
-        try
-        {
-            enumerator = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories).GetEnumerator();
-        }
-        catch (Exception exception)
-        {
-            logger.LogDebug(exception, "Unable to enumerate {Root} for background file classification.", root);
-        }
-
-        if (enumerator is null) yield break;
-
-        using (enumerator)
-        {
-            while (true)
-            {
-                string current;
-                try
-                {
-                    if (!enumerator.MoveNext()) yield break;
-                    current = enumerator.Current;
-                }
-                catch (Exception exception)
-                {
-                    logger.LogDebug(exception, "Stopped enumerating {Root} for background file classification.", root);
-                    yield break;
-                }
-
-                if (!IsInsideExcludedDirectory(current)) yield return current;
-            }
-        }
-    }
+    // Directory exclusion + safe enumeration (the extension pre-check above, DocumentTextExtractor.
+    // IsSupported, already makes each individual rejection cheap, but skipping node_modules/.git/bin/
+    // obj/.vs/dist/build entirely also avoids the per-file FileInfo/stat cost of walking into them at
+    // all) now lives in WatchedFolderEnumerator, shared with the File Inventory Report sync runners -
+    // see that class's comment.
 }
