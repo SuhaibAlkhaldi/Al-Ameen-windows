@@ -100,6 +100,14 @@ public sealed class FileInventoryChangeEnvelope
     public string? ClassificationTier { get; set; }
     public string? Provenance { get; set; }
     public bool? IsProtected { get; set; }
+
+    // Set when this content is the watermark rewrite the agent itself just applied (see
+    // SelfWrittenContentRegistry) - not a user edit. Null/absent for every other change.
+    public bool? IsSystemRewrite { get; set; }
+
+    // Fingerprint of the file's own content with any classification watermark removed (see the agent's
+    // ContentFingerprinter). Null for formats not read yet - the file hash is then the only identity.
+    public string? ContentFingerprint { get; set; }
     public DateTimeOffset OccurredAtUtc { get; set; }
 }
 

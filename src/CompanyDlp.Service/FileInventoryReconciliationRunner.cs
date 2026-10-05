@@ -11,6 +11,7 @@ namespace CompanyDlp.Service;
 // Never the primary sync path.
 public sealed class FileInventoryReconciliationRunner(
     FileInventoryOutbox outbox,
+    SelfWrittenContentRegistry selfWrittenContentRegistry,
     FileInventoryLocalStore localStore,
     FileInventoryContentResolver contentResolver,
     FileProvenanceStore provenanceStore,
@@ -107,6 +108,8 @@ public sealed class FileInventoryReconciliationRunner(
                 ClassificationTier = content.ClassificationTier,
                 Provenance = provenance,
                 IsProtected = isProtected,
+                IsSystemRewrite = selfWrittenContentRegistry.IsSelfWritten(content.FileHash) ? true : null,
+                ContentFingerprint = ContentFingerprinter.TryCompute(path),
                 OccurredAtUtc = nowUtc
             }, cancellationToken);
         }

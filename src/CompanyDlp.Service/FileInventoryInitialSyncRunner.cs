@@ -12,6 +12,7 @@ namespace CompanyDlp.Service;
 // encrypted later).
 public sealed class FileInventoryInitialSyncRunner(
     FileInventoryOutbox outbox,
+    SelfWrittenContentRegistry selfWrittenContentRegistry,
     FileInventoryLocalStore localStore,
     FileInventoryContentResolver contentResolver,
     FileProvenanceStore provenanceStore,
@@ -72,6 +73,8 @@ public sealed class FileInventoryInitialSyncRunner(
                 ClassificationTier = content.ClassificationTier,
                 Provenance = provenance,
                 IsProtected = isProtected,
+                IsSystemRewrite = selfWrittenContentRegistry.IsSelfWritten(content.FileHash) ? true : null,
+                ContentFingerprint = ContentFingerprinter.TryCompute(path),
                 OccurredAtUtc = nowUtc
             }, cancellationToken);
         }

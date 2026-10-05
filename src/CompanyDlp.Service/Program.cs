@@ -93,6 +93,7 @@ builder.Services.AddSingleton<AuditOutbox>();
 builder.Services.AddSingleton<FileInventoryLocalStore>();
 builder.Services.AddSingleton<FileInventoryOutbox>();
 builder.Services.AddSingleton<FileInventoryContentResolver>();
+builder.Services.AddSingleton<SelfWrittenContentRegistry>();
 builder.Services.AddSingleton<FileInventoryInitialSyncRunner>();
 builder.Services.AddSingleton<FileInventoryReconciliationRunner>();
 builder.Services.AddSingleton<AuditLogger>();

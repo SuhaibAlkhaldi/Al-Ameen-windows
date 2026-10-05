@@ -364,18 +364,24 @@ public static class ContentWatermarker
         @"\AClassification: .*\r?\nDevice: .*\r?\nLast Scanned: .*\r?\n\r?\n",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-    private static void WatermarkTxt(string filePath, string[] lines, DateTimeOffset lastScannedUtc, bool includeCornerLayer = true)
+    // Removes every classification header block from TXT content, leaving only the file's own text.
+    // Used both to rewrite a watermark and to fingerprint a file's real content independently of it.
+    public static string StripTxtWatermarkBlocks(string text)
     {
-        var original = File.ReadAllText(filePath);
-
         // Loop, not a single Replace(...) - cleans up any blocks that already stacked up from
         // before this format existed or from a transient bug, converging back to exactly one
         // regardless of how many accumulated.
-        var stripped = original;
+        var stripped = text;
         while (TxtMarkerBlock.IsMatch(stripped))
         {
             stripped = TxtMarkerBlock.Replace(stripped, string.Empty, 1);
         }
+        return stripped;
+    }
+
+    private static void WatermarkTxt(string filePath, string[] lines, DateTimeOffset lastScannedUtc, bool includeCornerLayer = true)
+    {
+        var stripped = StripTxtWatermarkBlocks(File.ReadAllText(filePath));
 
         var temporary = filePath + ".tmp";
         // TXT has no separate tile/corner concept - the one header block IS both layers' worth of

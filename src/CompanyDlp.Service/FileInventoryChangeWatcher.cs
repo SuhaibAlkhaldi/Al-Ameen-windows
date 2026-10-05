@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Linq;
 using CompanyDlp.Contracts;
 using CompanyDlp.Core;
 
@@ -37,12 +38,33 @@ public sealed class FileInventoryChangeWatcher(
     FileInventoryContentResolver contentResolver,
     FileProvenanceStore provenanceStore,
     InteractiveUserContextProvider interactiveUserContextProvider,
+    SelfWrittenContentRegistry selfWrittenContentRegistry,
     ILogger<FileInventoryChangeWatcher> logger) : BackgroundService
 {
     private readonly ConcurrentQueue<FileSystemEventArgs> _pendingEvents = new();
     private readonly SemaphoreSlim _signal = new(0, int.MaxValue);
     private readonly List<FileSystemWatcher> _watchers = [];
     private bool _startAttempted;
+
+    // Found live 2026-09-27, tracing a duplicate-report bug through to the backend and back: Windows'
+    // FileSystemWatcher is documented to sometimes raise a spurious extra Changed notification for the
+    // SAME final path immediately alongside a genuine Renamed notification for a single underlying
+    // File.Move (e.g. FileInventoryScanner.ApplyFilenameTag renaming "[Secret] x.txt" -> "[Public]
+    // x.txt") - not a bug in this class's own logic, a well-known quirk of the OS-level watcher itself.
+    // HandleCreatedOrModifiedAsync has no way to tell that echo apart from a genuine, separate content
+    // edit that merely happens to land on the same path a moment later - both look identical by the
+    // time they reach this queue. Since HandleRenamedAsync already reports a Renamed change with full
+    // lineage (old hash/tier) for that same path, a Changed/Created echo immediately after it is pure
+    // noise: at best a no-op once it reaches the backend (already covered by
+    // AgentFileInventoryService's idempotent upsert), at worst it strips the real transition's lineage
+    // (a blind, hash-less "Genesis" row masking a real classification change) if it happens to be
+    // treated as arriving first. Suppressing it here at the source is cleaner than asking the backend
+    // to keep guessing after the fact. Deliberately a short window (few seconds) and keyed on the exact
+    // exact target path only - a genuine, unrelated edit to the same path minutes later is never
+    // affected, and even a suppressed echo in the rare coincidental-timing case is self-healed by
+    // FileInventoryReconciliationRunner's periodic full re-sync, so nothing is permanently lost.
+    private static readonly TimeSpan RenameEchoSuppressionWindow = TimeSpan.FromSeconds(3);
+    private readonly Dictionary<string, DateTimeOffset> _recentlyRenamedTargetPaths = new(StringComparer.OrdinalIgnoreCase);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -161,6 +183,7 @@ public sealed class FileInventoryChangeWatcher(
     private async Task HandleCreatedOrModifiedAsync(string path, CancellationToken cancellationToken)
     {
         if (!FileInventoryContentResolver.IsTrackable(path)) return;
+        if (IsLikelyRenameEcho(path)) return; // see this class's RenameEchoSuppressionWindow comment
         if (!WaitUntilStable(path)) return; // still being written, or already gone - skip, nothing lost
 
         var change = await BuildChangeForExistingFileAsync(FileInventoryChangeTypes.Created, path, oldFilePath: null, cancellationToken);
@@ -214,6 +237,7 @@ public sealed class FileInventoryChangeWatcher(
             var createdChange = await BuildChangeForExistingFileAsync(FileInventoryChangeTypes.Created, renamed.FullPath, oldFilePath: null, cancellationToken);
             if (createdChange is null) return;
             await outbox.EnqueueAsync(createdChange, cancellationToken);
+            MarkRecentlyRenamed(renamed.FullPath);
             return;
         }
 
@@ -224,6 +248,7 @@ public sealed class FileInventoryChangeWatcher(
 
         localStore.Remove(renamed.OldFullPath);
         await outbox.EnqueueAsync(change, cancellationToken);
+        MarkRecentlyRenamed(renamed.FullPath);
     }
 
     // Shared by the Created/Modified and Renamed paths: resolves the path's current content (hash,
@@ -264,8 +289,38 @@ public sealed class FileInventoryChangeWatcher(
             ClassificationTier = content.ClassificationTier,
             Provenance = provenance,
             IsProtected = isProtected,
+            IsSystemRewrite = selfWrittenContentRegistry.IsSelfWritten(content.FileHash) ? true : null,
+            ContentFingerprint = ContentFingerprinter.TryCompute(path),
             OccurredAtUtc = nowUtc
         };
+    }
+
+    // See RenameEchoSuppressionWindow's comment. Called only from HandleEventAsync's own single
+    // sequential processing loop (never from the raw OnEvent callback, which only touches the
+    // already-thread-safe _pendingEvents/_signal), so a plain Dictionary is safe here - no concurrent
+    // access to guard against.
+    private void MarkRecentlyRenamed(string targetPath)
+    {
+        PruneExpiredRenameMarks();
+        _recentlyRenamedTargetPaths[targetPath] = DateTimeOffset.UtcNow;
+    }
+
+    private bool IsLikelyRenameEcho(string path)
+    {
+        PruneExpiredRenameMarks();
+        return _recentlyRenamedTargetPaths.ContainsKey(path);
+    }
+
+    private void PruneExpiredRenameMarks()
+    {
+        var cutoffUtc = DateTimeOffset.UtcNow - RenameEchoSuppressionWindow;
+        foreach (var expiredPath in _recentlyRenamedTargetPaths
+            .Where(entry => entry.Value < cutoffUtc)
+            .Select(entry => entry.Key)
+            .ToList())
+        {
+            _recentlyRenamedTargetPaths.Remove(expiredPath);
+        }
     }
 
     // Same short exclusive-open retry loop as DesktopAppProvenanceMonitor.WaitUntilStable - FileSystemWatcher

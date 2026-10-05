@@ -403,6 +403,20 @@
       // exact object was never tagged but a real file was picked recently, show/hash that original
       // file instead so the alert and any resulting request reflect what the employee actually
       // selected, not an opaque "blob" - otherwise the untagged object is hashed/checked as-is.
+      //
+      // hasGenuineFileEvidence (found live 2026-10-03): deliberately does NOT gate the block/hash/audit
+      // above - see this function's own header comment on why that gate was removed once already (it
+      // let a real file leak through uncontested). It exists only for the async, fetch/XHR/worker
+      // callers below to decide notifyUser: an untagged, outside-the-activity-window blob/ArrayBuffer
+      // is still fully checked and blocked/audited exactly as before, but it has zero evidence of being
+      // a real user file action (same codebase default for an unrecognized hash is fail-closed to Very
+      // Secret - see PipeServer.cs's EvaluatePermission handler), so routine non-file binary traffic a
+      // page sends on its own (observed live: ChatGPT's own session/auth fetch calls) no longer pops a
+      // "Very Secret file blocked" alert for something that was never a file at all. form-file-submit/
+      // file-input-change/file-drop never reach this function needing it - a native file input/drop
+      // inherently requires a real browser-trusted user gesture - so their own signal() calls are left
+      // unconditionally true, untouched by this.
+      const hasGenuineFileEvidence = fileOrigin.has(rawFile) || isWithinFileActivityWindow();
       const file = fileOrigin.has(rawFile)
         ? rawFile
         : (isWithinFileActivityWindow() && lastTaggedFiles[0]) || rawFile;
@@ -411,7 +425,7 @@
       try {
         hash = await sha256Hex(file);
       } catch (_) {
-        return { allowed: false, actionKey, resource: summarizeFile(file), details: "HashComputationFailed" };
+        return { allowed: false, actionKey, resource: summarizeFile(file), details: "HashComputationFailed", hasGenuineFileEvidence };
       }
 
       const decision = await evaluateFileUpload(actionKey, hash);
@@ -425,7 +439,8 @@
             classification: decision.fileClassification,
             classificationReasonCode: decision.fileClassificationReasonCode
           },
-          details: decision.reasonCode || "NotPermitted"
+          details: decision.reasonCode || "NotPermitted",
+          hasGenuineFileEvidence
         };
       }
     }
@@ -586,7 +601,7 @@
         if (result.allowed) {
           originalXhrSend.call(xhr, body);
         } else {
-          signal("xhr-file-upload", result.details, true, result.resource, result.actionKey);
+          signal("xhr-file-upload", result.details, result.hasGenuineFileEvidence, result.resource, result.actionKey);
           // xhr.abort() alone fires no event on an XHR whose real send() was never called - the
           // page's onerror/onload/onloadend handlers (and any "uploading..." UI tied to them) would
           // then wait forever for an event that never arrives. Dispatch synthetic error/loadend
@@ -655,7 +670,7 @@
 
       const result = await checkFilesForTransmission(files);
       if (!result.allowed) {
-        signal("fetch-file-upload", result.details, true, result.resource, result.actionKey);
+        signal("fetch-file-upload", result.details, result.hasGenuineFileEvidence, result.resource, result.actionKey);
         throw new TypeError("File upload blocked by company DLP policy.");
       }
       return originalFetch(input, init);
@@ -742,7 +757,7 @@
         if (result.allowed) {
           originalWorkerPostMessage.apply(worker, args);
         } else {
-          signal("worker-file-transfer", result.details, true, result.resource, result.actionKey);
+          signal("worker-file-transfer", result.details, result.hasGenuineFileEvidence, result.resource, result.actionKey);
         }
       });
       return undefined;

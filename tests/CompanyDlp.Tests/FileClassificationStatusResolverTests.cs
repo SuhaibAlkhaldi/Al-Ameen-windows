@@ -61,6 +61,7 @@ public sealed class FileClassificationStatusResolverTests : IDisposable
             usbSnapshotCache: null!,
             fileProtectionEngine: null!,
             encryptedFileHashStore: null!,
+            selfWrittenContentRegistry: new SelfWrittenContentRegistry(),
             NullLogger<FileInventoryScanner>.Instance);
 
         // engine/encryptedFileHashStore are only touched by ResolveEncryptedAsync's .dlpenc branch -

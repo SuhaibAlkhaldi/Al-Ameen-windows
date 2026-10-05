@@ -28,6 +28,7 @@ public sealed class FileInventoryScanner(
     UsbSnapshotCache usbSnapshotCache,
     FileProtectionEngine fileProtectionEngine,
     EncryptedFileHashStore encryptedFileHashStore,
+    SelfWrittenContentRegistry selfWrittenContentRegistry,
     ILogger<FileInventoryScanner> logger)
 {
     // Per-path last-seen write time - avoids re-hashing and re-classifying every file in the
@@ -441,6 +442,7 @@ public sealed class FileInventoryScanner(
         if (!ApplyOrRemoveWatermark(path, classification, classificationHash, scannedAtUtc, watermarkPolicy, context, allowed))
             return fallbackWriteTimeUtc;
 
+        selfWrittenContentRegistry.RecordRewrite(path);
         CarryProvenanceAndClassificationForwardAfterRewrite(path, classificationHash);
 
         try
@@ -510,6 +512,7 @@ public sealed class FileInventoryScanner(
         var scannedAtUtc = DateTimeOffset.UtcNow;
         if (!ApplyOrRemoveWatermark(path, cached.Classification, hash, scannedAtUtc, watermarkPolicy, context, allowed)) return;
 
+        selfWrittenContentRegistry.RecordRewrite(path);
         CarryProvenanceAndClassificationForwardAfterRewrite(path, hash);
 
         try

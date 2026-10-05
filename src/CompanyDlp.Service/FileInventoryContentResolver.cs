@@ -92,7 +92,7 @@ public sealed class FileInventoryContentResolver(
     private static bool IsRealClassification(CachedFileClassification? classification) =>
         classification is not null && !FileClassificationReasonCodes.TransientFailureReasonCodes.Contains(classification.ReasonCode);
 
-    private static string? ComputeHash(string path)
+    public static string? ComputeHash(string path)
     {
         try
         {

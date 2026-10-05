@@ -262,6 +262,7 @@
 
   const recentBrowserBlocks = new Map();
   const recentSilentBrowserBlocks = new Map();
+  const recentSilentTransportToasts = new Map();
   const browserBlockMessages = {
     "file-picker": ["File upload blocked", "Selecting files through this browser is not allowed."],
     "showPicker": ["File upload blocked", "The browser file picker is disabled by company policy."],
@@ -298,6 +299,15 @@
   // file classification and just gets the plain notice it always has.
   const FILE_TRANSMISSION_ACTIONS = new Set(["fetch-file-upload", "xhr-file-upload", "form-file-submit", "worker-file-transfer", "file-input-change", "file-drop"]);
 
+  // Mirrors BrowserAuditNotificationPolicy.SilentTransportActions on the Windows service exactly
+  // (src/CompanyDlp.Core/BrowserAuditNotificationPolicy.cs) - keep the two lists in sync. These are
+  // network-transport detections, not reliable proof of a fresh user upload gesture: a page can
+  // legitimately re-issue the same blocked fetch/xhr/send every few seconds on its own (observed live
+  // 2026-10-03: a pending chat attachment retried roughly every 13-50s for several minutes straight),
+  // so unlike a real picker/drop they must NOT share the short, gesture-driven toast dedup window below
+  // - see reportBrowserBlock's dedicated branch for this set.
+  const SILENT_TRANSPORT_ACTIONS = new Set(["formdata-file", "formdata-files", "xhr-file-upload", "fetch-file-upload", "beacon-file-upload"]);
+
   function buildRequestPermissionLink(actionKey, correlationId) {
     const portalBaseUrl = policy?.fileClassification?.portalBaseUrl;
     if (!portalBaseUrl || !actionKey || !correlationId) return null;
@@ -322,6 +332,33 @@
         if (timestamp < now - silentWindowMs * 3) recentSilentBrowserBlocks.delete(oldKey);
       }
       audit(action, "blocked", null, details ? `silent-background:${details}` : "silent-background", resource, { actionKey, correlationId });
+      return;
+    }
+
+    // Silent-transport actions (see SILENT_TRANSPORT_ACTIONS above) get their own branch, entirely
+    // separate from recentBrowserBlocks below: they must never share that map's "group" key (every
+    // file-ish action, including a genuine file-input-change/file-drop, collapses to the same
+    // "file-upload" group there), or a background retry storm on this path would also wrongly suppress
+    // the toast for an unrelated, real file picker/drop the user performs shortly after. The audit
+    // trail is unaffected either way - every single call still reaches the backend via audit() below,
+    // exactly as before this branch existed; only the in-page toast is deduped, and only for this
+    // category, and only against its own dedicated window.
+    if (SILENT_TRANSPORT_ACTIONS.has(action)) {
+      const transportKey = `${action}|${location.origin}`;
+      const transportToastWindowMs = 60000;
+      if ((recentSilentTransportToasts.get(transportKey) || 0) <= now - transportToastWindowMs) {
+        recentSilentTransportToasts.set(transportKey, now);
+        for (const [oldKey, timestamp] of recentSilentTransportToasts) {
+          if (timestamp < now - transportToastWindowMs * 3) recentSilentTransportToasts.delete(oldKey);
+        }
+        const [title, baseMessage] = browserBlockMessages[action] || ["Browser action blocked", "This action is not allowed by company security policy."];
+        const message = isFileTransmission && resource?.classification
+          ? `${baseMessage} File classification: ${resource.classification}.`
+          : baseMessage;
+        const link = isFileTransmission ? buildRequestPermissionLink(actionKey, correlationId) : null;
+        notify(title, message, "error", link);
+      }
+      audit(action, "blocked", null, details, resource, { actionKey, correlationId });
       return;
     }
 
