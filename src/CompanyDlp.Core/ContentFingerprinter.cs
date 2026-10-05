@@ -21,17 +21,27 @@ public static class ContentFingerprinter
 
     public static string? TryCompute(string path)
     {
+        var text = TryExtractNormalizedText(path);
+        return text is null ? null : HashNormalizedText(text);
+    }
+
+    // The file's own text, normalized (CRLF to LF, trailing whitespace trimmed), with the watermark removed.
+    // TryCompute hashes exactly this text, and FileVersionTextCapture ships it to the backend for the diff
+    // viewer - so the stored text and the fingerprint always describe the same content.
+    public static string? TryExtractNormalizedText(string path)
+    {
         try
         {
-            return Path.GetExtension(path).ToLowerInvariant() switch
+            var text = Path.GetExtension(path).ToLowerInvariant() switch
             {
-                ".txt" => HashNormalized(ContentWatermarker.StripTxtWatermarkBlocks(File.ReadAllText(path))),
-                ".docx" => TryComputeDocx(path),
-                ".pptx" => TryComputePptx(path),
-                ".xlsx" => TryComputeWithExtractor(path, ".xlsx"),
-                ".pdf" => TryComputePdf(path),
+                ".txt" => ContentWatermarker.StripTxtWatermarkBlocks(File.ReadAllText(path)),
+                ".docx" => ExtractDocxText(path),
+                ".pptx" => ExtractPptxText(path),
+                ".xlsx" => ExtractWithExtractorText(path, ".xlsx"),
+                ".pdf" => ExtractPdfText(path),
                 _ => null
             };
+            return text is null ? null : Normalize(text);
         }
         catch
         {
@@ -39,9 +49,12 @@ public static class ContentFingerprinter
         }
     }
 
+    public static string HashNormalizedText(string normalizedText) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalizedText))).ToLowerInvariant();
+
     // Only the document body is read. The classification watermark lives in the document's header parts
     // (see ContentWatermarker.WatermarkDocx), so the body is the file's own content by construction.
-    private static string? TryComputeDocx(string path)
+    private static string? ExtractDocxText(string path)
     {
         using var stream = OpenShared(path);
         using var document = WordprocessingDocument.Open(stream, isEditable: false);
@@ -49,12 +62,11 @@ public static class ContentFingerprinter
         var body = document.MainDocumentPart?.Document?.Body;
         if (body == null) return null;
 
-        var text = string.Join("\n", body.Descendants<Paragraph>().Select(paragraph => paragraph.InnerText));
-        return HashNormalized(text);
+        return string.Join("\n", body.Descendants<Paragraph>().Select(paragraph => paragraph.InnerText));
     }
 
     // Text of every slide shape except the watermark shape (named PptxWatermarkShapeName).
-    private static string? TryComputePptx(string path)
+    private static string? ExtractPptxText(string path)
     {
         using var stream = OpenShared(path);
         using var document = PresentationDocument.Open(stream, isEditable: false);
@@ -79,19 +91,19 @@ public static class ContentFingerprinter
                 builder.Append('\n');
             }
         }
-        return HashNormalized(builder.ToString());
+        return builder.ToString();
     }
 
     // Cell values only. The watermark is drawn as a worksheet drawing, not as cell content.
-    private static string? TryComputeWithExtractor(string path, string extension)
+    private static string? ExtractWithExtractorText(string path, string extension)
     {
         using var stream = OpenShared(path);
-        return HashNormalized(DocumentTextExtractor.ExtractText(stream, extension));
+        return DocumentTextExtractor.ExtractText(stream, extension);
     }
 
     // Page text with the watermark's own lines removed. PDF has no object structure for the watermark,
     // so it is recognized by the fixed lines it prints.
-    private static string? TryComputePdf(string path)
+    private static string? ExtractPdfText(string path)
     {
         using var stream = OpenShared(path);
         var text = DocumentTextExtractor.ExtractText(stream, ".pdf");
@@ -103,15 +115,11 @@ public static class ContentFingerprinter
             if (WatermarkLinePrefixes.Any(prefix => trimmed.StartsWith(prefix, StringComparison.Ordinal))) continue;
             builder.Append(line).Append('\n');
         }
-        return HashNormalized(builder.ToString());
+        return builder.ToString();
     }
 
     private static FileStream OpenShared(string path) =>
         new(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
 
-    private static string HashNormalized(string text)
-    {
-        var normalized = text.Replace("\r\n", "\n").TrimEnd();
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalized))).ToLowerInvariant();
-    }
+    private static string Normalize(string text) => text.Replace("\r\n", "\n").TrimEnd();
 }

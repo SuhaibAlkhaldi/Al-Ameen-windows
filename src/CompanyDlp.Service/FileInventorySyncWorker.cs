@@ -108,6 +108,10 @@ public sealed class FileInventorySyncWorker(
             var items = await outbox.ReadBatchAsync(policy.FileInventorySync.BatchSize, cancellationToken);
             if (items.Count == 0) return;
 
+            // Captured file text can make a full batch too large for one request (see FileInventoryPayloadBudget).
+            // Whatever does not fit stays in the outbox and goes out on the next pass of this loop.
+            var batch = FileInventoryPayloadBudget.TakeWithinBudget(items, item => FileInventoryPayloadBudget.EstimateBytes(item.Change));
+
             var identity = identityProvider.Get();
             var response = await backendApiClient.SendFileInventoryBatchAsync(new AgentFileInventoryBatchRequest
             {
@@ -115,18 +119,19 @@ public sealed class FileInventorySyncWorker(
                 DeviceId = identity.DeviceId,
                 AgentVersion = identity.AgentVersion,
                 SyncKind = syncKind,
-                Changes = items.Select(item => item.Change).ToList()
+                Changes = batch.Select(item => item.Change).ToList()
             }, cancellationToken);
 
             var delivered = response.AcceptedChangeIds.ToHashSet();
-            outbox.MarkDelivered(items, delivered);
+            outbox.MarkDelivered(batch, delivered);
 
             foreach (var rejection in response.RejectedChanges.Where(item => !item.Retryable))
             {
-                var item = items.FirstOrDefault(candidate => candidate.Change.ChangeId == rejection.ChangeId);
+                var item = batch.FirstOrDefault(candidate => candidate.Change.ChangeId == rejection.ChangeId);
                 if (item is not null) outbox.MarkPermanentlyRejected(item, rejection.ReasonCode);
             }
 
+            if (batch.Count < items.Count) continue; // the byte budget cut this read short: the rest goes out next
             if (items.Count < policy.FileInventorySync.BatchSize) return; // that was the last page
         }
     }

@@ -277,6 +277,8 @@ public sealed class FileInventoryChangeWatcher(
         localStore.Set(new FileInventoryLocalEntry(
             path, content.FileHash, sizeBytes, content.ClassificationTier, provenance, isProtected, nowUtc, nowUtc));
 
+        var normalizedText = ContentFingerprinter.TryExtractNormalizedText(path);
+
         return new FileInventoryChangeEnvelope
         {
             ChangeId = Guid.NewGuid(),
@@ -290,7 +292,8 @@ public sealed class FileInventoryChangeWatcher(
             Provenance = provenance,
             IsProtected = isProtected,
             IsSystemRewrite = selfWrittenContentRegistry.IsSelfWritten(content.FileHash) ? true : null,
-            ContentFingerprint = ContentFingerprinter.TryCompute(path),
+            ContentFingerprint = normalizedText is null ? null : ContentFingerprinter.HashNormalizedText(normalizedText),
+            ExtractedText = FileVersionTextCapture.ForEnvelope(normalizedText, content.ClassificationTier, isProtected),
             OccurredAtUtc = nowUtc
         };
     }

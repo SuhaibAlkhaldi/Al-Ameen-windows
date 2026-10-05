@@ -108,6 +108,13 @@ public sealed class FileInventoryChangeEnvelope
     // Fingerprint of the file's own content with any classification watermark removed (see the agent's
     // ContentFingerprinter). Null for formats not read yet - the file hash is then the only identity.
     public string? ContentFingerprint { get; set; }
+
+    // The file's extracted text, normalized the same way as ContentFingerprint. Set only for the sensitive tiers
+    // (Restricted, Secret, Very Secret) and only when it fits the capture limit (see FileVersionTextCapture) -
+    // null otherwise, so the backend's diff viewer reports that version's text as unavailable. Sent over the
+    // agent's TLS channel; the backend encrypts it at rest and never logs it.
+    public string? ExtractedText { get; set; }
+
     public DateTimeOffset OccurredAtUtc { get; set; }
 }
 

@@ -97,6 +97,8 @@ public sealed class FileInventoryReconciliationRunner(
             localStore.Set(new FileInventoryLocalEntry(
                 path, content.FileHash, info.Length, content.ClassificationTier, provenance, isProtected, nowUtc, nowUtc));
 
+            var normalizedText = ContentFingerprinter.TryExtractNormalizedText(path);
+
             await outbox.EnqueueAsync(new FileInventoryChangeEnvelope
             {
                 ChangeId = Guid.NewGuid(),
@@ -109,7 +111,8 @@ public sealed class FileInventoryReconciliationRunner(
                 Provenance = provenance,
                 IsProtected = isProtected,
                 IsSystemRewrite = selfWrittenContentRegistry.IsSelfWritten(content.FileHash) ? true : null,
-                ContentFingerprint = ContentFingerprinter.TryCompute(path),
+                ContentFingerprint = normalizedText is null ? null : ContentFingerprinter.HashNormalizedText(normalizedText),
+                ExtractedText = FileVersionTextCapture.ForEnvelope(normalizedText, content.ClassificationTier, isProtected),
                 OccurredAtUtc = nowUtc
             }, cancellationToken);
         }
