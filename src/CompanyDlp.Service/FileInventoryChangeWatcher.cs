@@ -23,9 +23,10 @@ namespace CompanyDlp.Service;
 //
 // This only ever REPORTS a classification FileInventoryScanner already computed and cached - it never
 // classifies anything itself. A Created/Modified event for content with no FileClassificationCache
-// entry yet (not yet scanned, unsupported extension, or over MaximumFileSizeBytes) is simply skipped
-// rather than reported with a fabricated tier; FileInventoryReconciliationRunner's periodic pass picks
-// it up once (if ever) a real classification exists. Same reasoning narrows the File Inventory Report's
+// entry yet (not yet scanned, unsupported extension, or over MaximumFileSizeBytes) is never reported
+// with a fabricated tier. It waits and is retried (see _awaitingClassification) until a real
+// classification exists, the file is gone, or the wait times out; FileInventoryReconciliationRunner's
+// periodic pass is the backstop after that. Same reasoning narrows the File Inventory Report's
 // practical scope to the same "classifiable document" universe FileInventoryScanner already limits
 // itself to, PLUS .dlpenc (see FileInventoryContentResolver.IsTrackable) - reporting on files this
 // system has no classification opinion about at all (images, executables, archives, ...) wouldn't
@@ -66,6 +67,18 @@ public sealed class FileInventoryChangeWatcher(
     private static readonly TimeSpan RenameEchoSuppressionWindow = TimeSpan.FromSeconds(3);
     private readonly Dictionary<string, DateTimeOffset> _recentlyRenamedTargetPaths = new(StringComparer.OrdinalIgnoreCase);
 
+    // A Created/Modified event whose new content has no classification yet is no longer dropped. The path waits
+    // here and is retried every AwaitingClassificationRetryInterval, until its change is enqueued, the file is gone,
+    // or it has waited AwaitingClassificationMaxAge (the hourly reconciliation pass remains the backstop after that).
+    // Found live 2026-10-06: an edited Secret file's new content had no cached classification yet, so the change was
+    // skipped, and a Deleted event for the same path then removed the record with nothing to replace it.
+    // Only read and written from ExecuteAsync's sequential loop, so a plain Dictionary is safe here.
+    private static readonly TimeSpan AwaitingClassificationRetryInterval = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan AwaitingClassificationMaxAge = TimeSpan.FromHours(1);
+    private readonly Dictionary<string, AwaitingClassification> _awaitingClassification = new(StringComparer.OrdinalIgnoreCase);
+
+    private sealed record AwaitingClassification(DateTimeOffset FirstSeenUtc, DateTimeOffset LastTriedUtc);
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
@@ -101,6 +114,15 @@ public sealed class FileInventoryChangeWatcher(
             while (_pendingEvents.TryDequeue(out var fileEvent))
             {
                 await HandleEventAsync(fileEvent, stoppingToken);
+            }
+
+            try
+            {
+                await RetryAwaitingClassificationAsync(stoppingToken);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                logger.LogDebug(exception, "Could not retry the file inventory changes waiting for a classification.");
             }
         }
 
@@ -187,8 +209,14 @@ public sealed class FileInventoryChangeWatcher(
         if (!WaitUntilStable(path)) return; // still being written, or already gone - skip, nothing lost
 
         var change = await BuildChangeForExistingFileAsync(FileInventoryChangeTypes.Created, path, oldFilePath: null, cancellationToken);
-        if (change is null) return; // not yet classified - see class comment
+        if (change is null)
+        {
+            // Not classified yet: wait and retry (see _awaitingClassification) instead of dropping the change.
+            AddAwaitingClassification(path);
+            return;
+        }
 
+        _awaitingClassification.Remove(path);
         await outbox.EnqueueAsync(change, cancellationToken);
     }
 
@@ -199,6 +227,16 @@ public sealed class FileInventoryChangeWatcher(
         // (untrackable extension) was never part of the synced universe, so its deletion is a no-op.
         if (!FileInventoryContentResolver.IsTrackable(path)) return;
 
+        // A Deleted event for a path that is still on disk is not a deletion: editors and the classification
+        // rewrite can briefly remove a path while the file is being replaced. Removing the record here made an
+        // edited file vanish from the report with no replacement, so the file is kept and its content re-checked.
+        if (File.Exists(path))
+        {
+            AddAwaitingClassification(path);
+            return;
+        }
+
+        _awaitingClassification.Remove(path);
         localStore.Remove(path);
         _ = outbox.EnqueueAsync(new FileInventoryChangeEnvelope
         {
@@ -302,6 +340,43 @@ public sealed class FileInventoryChangeWatcher(
     // sequential processing loop (never from the raw OnEvent callback, which only touches the
     // already-thread-safe _pendingEvents/_signal), so a plain Dictionary is safe here - no concurrent
     // access to guard against.
+    private void AddAwaitingClassification(string path)
+    {
+        if (_awaitingClassification.ContainsKey(path)) return;
+
+        var nowUtc = DateTimeOffset.UtcNow;
+        _awaitingClassification[path] = new AwaitingClassification(nowUtc, nowUtc);
+    }
+
+    // Re-runs the change build for every path still waiting for a classification. A path leaves the wait once its
+    // change is enqueued, its file is gone, or it has waited AwaitingClassificationMaxAge.
+    private async Task RetryAwaitingClassificationAsync(CancellationToken cancellationToken)
+    {
+        if (_awaitingClassification.Count == 0) return;
+
+        var nowUtc = DateTimeOffset.UtcNow;
+        foreach (var (path, entry) in _awaitingClassification.ToList())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (nowUtc - entry.LastTriedUtc < AwaitingClassificationRetryInterval) continue;
+
+            if (!File.Exists(path) || nowUtc - entry.FirstSeenUtc > AwaitingClassificationMaxAge)
+            {
+                _awaitingClassification.Remove(path);
+                continue;
+            }
+
+            _awaitingClassification[path] = entry with { LastTriedUtc = nowUtc };
+            if (!WaitUntilStable(path)) continue;
+
+            var change = await BuildChangeForExistingFileAsync(FileInventoryChangeTypes.Created, path, oldFilePath: null, cancellationToken);
+            if (change is null) continue;
+
+            _awaitingClassification.Remove(path);
+            await outbox.EnqueueAsync(change, cancellationToken);
+        }
+    }
+
     private void MarkRecentlyRenamed(string targetPath)
     {
         PruneExpiredRenameMarks();
