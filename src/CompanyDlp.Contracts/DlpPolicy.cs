@@ -19,6 +19,9 @@ public sealed class DlpPolicy
     public DesktopAppProvenancePolicy DesktopAppProvenance { get; set; } = new();
     public FileClassificationPolicy FileClassification { get; set; } = new();
     public FileInventorySyncPolicy FileInventorySync { get; set; } = new();
+
+    // Browser send observation (Phase 7). Off by default: the extension observes Gmail sends only when this is enabled.
+    public FileTransferObservationPolicy FileTransferObservation { get; set; } = new();
     public BackendPolicy Backend { get; set; } = new();
     public PermissionPolicy Permissions { get; set; } = new();
     public List<SensitiveRule> SensitiveRules { get; set; } = [];
@@ -307,5 +310,14 @@ public sealed class FileInventorySyncPolicy
     public int IncrementalSyncSeconds { get; set; } = 15;
     public int ReconciliationScanIntervalMinutes { get; set; } = 60;
     public string BackendPath { get; set; } = "api/v1/agent/file-inventory/batch";
+    public int TimeoutSeconds { get; set; } = 30;
+}
+
+// Phase 7: browser send observations (Gmail first). Disabled until a policy turns it on for the organization.
+public sealed class FileTransferObservationPolicy
+{
+    public bool Enabled { get; set; } = false;
+    public int BatchSize { get; set; } = 200;
+    public string BackendPath { get; set; } = "api/v1/agent/file-transfer-events/batch";
     public int TimeoutSeconds { get; set; } = 30;
 }

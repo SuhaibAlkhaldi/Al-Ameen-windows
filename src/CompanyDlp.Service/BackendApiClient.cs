@@ -29,6 +29,17 @@ public sealed class BackendApiClient(
             cancellationToken,
             policyStore.Get().FileInventorySync.TimeoutSeconds);
 
+    // Phase 7. Any non-success status throws, so the caller keeps the batch in the outbox for a retry.
+    public Task<FileTransferBatchAck> SendFileTransferBatchAsync(
+        FileTransferEventBatchRequest request,
+        CancellationToken cancellationToken) =>
+        SendJsonAsync<FileTransferEventBatchRequest, FileTransferBatchAck>(
+            HttpMethod.Post,
+            policyStore.Get().FileTransferObservation.BackendPath,
+            request,
+            cancellationToken,
+            policyStore.Get().FileTransferObservation.TimeoutSeconds);
+
     public Task<AgentHeartbeatResponse> SendHeartbeatAsync(
         AgentHeartbeatRequest request,
         CancellationToken cancellationToken) =>

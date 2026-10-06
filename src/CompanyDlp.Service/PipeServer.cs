@@ -30,6 +30,7 @@ public sealed class PipeServer(
     RuntimeOverrideStore runtimeOverrides,
     NotificationStore notificationStore,
     FileProvenanceStore fileProvenanceStore,
+    FileTransferOutbox fileTransferOutbox,
     ILogger<PipeServer> logger)
 {
     private readonly DateTimeOffset _startedAt = DateTimeOffset.UtcNow;
@@ -330,6 +331,16 @@ public sealed class PipeServer(
                     logger.LogDebug(exception, "Could not hash a reported browser download at {Path}.", input.Path);
                     return DlpResponse.Ok("Could not hash the downloaded file; it will fall back to the USB/default provenance check.");
                 }
+            }
+            case DlpMessageTypes.FileTransferObserved:
+            {
+                // Phase 7: dropped unless the organization turned observation on. When off, nothing is queued or sent.
+                var notice = request.Data?.Deserialize<FileTransferObservationNotice>(JsonDefaults.Options);
+                if (notice is null || !policyStore.Get().FileTransferObservation.Enabled)
+                    return DlpResponse.Ok("File transfer observation is off or the notice was empty.");
+
+                await fileTransferOutbox.EnqueueAsync(notice, cancellationToken);
+                return DlpResponse.Ok("File transfer observation queued.");
             }
             case DlpMessageTypes.GetOutboxStatus:
                 return DlpResponse.Ok(data: auditOutbox.GetStatus());

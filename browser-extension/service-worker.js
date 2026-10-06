@@ -226,7 +226,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (message?.type === "classifyText" || message?.type === "classifyFile" || message?.type === "audit") {
+  // fileTransferObserved (Phase 7): a Gmail send observed by gmail-observer.js. Forwarded as-is to the agent, which queues it.
+  if (message?.type === "classifyText" || message?.type === "classifyFile" || message?.type === "audit" || message?.type === "fileTransferObserved") {
     sendNative(message).then(sendResponse);
     return true;
   }

@@ -66,6 +66,9 @@ public sealed class PolicyStore(
         target.FileProtection = localSource.FileProtection;
         target.Print = localSource.Print;
         target.FileOpenProtection = localSource.FileOpenProtection;
+        // Phase 7 file-transfer observation: the backend does not send this section yet, so the local config is its only
+        // source. Without this line the flag would fall back to its default (off) after every remote policy sync.
+        target.FileTransferObservation = localSource.FileTransferObservation;
         // Same bug class as FileOpenProtection above (and the same fix) - the backend doesn't model
         // DesktopAppProvenance at all, so a forgotten entry here would silently reset it (Enabled and
         // ExcludedProcessNames included) to C# type defaults on every remote/cached policy load.

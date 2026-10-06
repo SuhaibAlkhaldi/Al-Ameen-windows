@@ -57,6 +57,7 @@ public sealed class PipeServerTests : IDisposable
             runtimeOverrides,
             notificationStore: null!,
             fileProvenanceStore: null!,
+            fileTransferOutbox: new FileTransferOutbox(policyStore, new MachineDataProtector(), NullLogger<FileTransferOutbox>.Instance),
             NullLogger<PipeServer>.Instance);
     }
 

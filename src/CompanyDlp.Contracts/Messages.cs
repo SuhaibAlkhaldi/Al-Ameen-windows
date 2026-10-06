@@ -33,6 +33,9 @@ public static class DlpMessageTypes
     // Sent by the Desktop app's --request-access CLI verb (ShellCryptoCommandRunner), reached via the
     // .dlpenc ProgID's default "open" command - see FileProtectionCoordinator.ExecuteOpenAccessAsync.
     public const string RequestFileOpenAccess = "requestFileOpenAccess";
+
+    // Phase 7: a browser send observed by the Gmail content script (see FileTransferContracts.cs).
+    public const string FileTransferObserved = "fileTransferObserved";
 }
 
 public sealed class DlpRequest

@@ -129,6 +129,38 @@ public static class BrowserNativeMessageRouter
             }, cancellationToken);
         }
 
+        // Phase 7: a send observed by the Gmail content script. Forwarded as raw data only. The Service enforces the policy
+        // switch and the backend decides the evidence, so nothing here is trusted beyond the shape check.
+        if (type.Equals("fileTransferObserved", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!Guid.TryParse(ReadString(message, "sendActionId", ""), out var sendActionId))
+            {
+                return new { success = false, message = "sendActionId is missing or invalid." };
+            }
+
+            var observedAtText = ReadString(message, "observedAtUtc", "");
+            var observedAtUtc = DateTimeOffset.TryParse(observedAtText, out var parsedObservedAt)
+                ? parsedObservedAt.ToUniversalTime()
+                : DateTimeOffset.UtcNow;
+
+            return await SendPipeAsync(DlpMessageTypes.FileTransferObserved, new FileTransferObservationNotice
+            {
+                SendActionId = sendActionId,
+                RecipientOrdinal = (int)(ReadInt64(message, "recipientOrdinal") ?? 0),
+                Channel = ReadString(message, "channel", ""),
+                RecipientRole = ReadString(message, "recipientRole", "") is { Length: > 0 } role ? role : null,
+                RecipientKind = ReadString(message, "recipientKind", ""),
+                RecipientValue = ReadString(message, "recipientValue", ""),
+                RecipientEvidenceType = ReadString(message, "recipientEvidenceType", ""),
+                FileName = ReadString(message, "fileName", ""),
+                FileSizeBytes = ReadInt64(message, "fileSizeBytes") ?? 0,
+                FileHashBytes = ReadString(message, "fileHashBytes", "") is { Length: > 0 } hash ? hash : null,
+                ContentFingerprint = ReadString(message, "contentFingerprint", "") is { Length: > 0 } fingerprint ? fingerprint : null,
+                ObservedAtUtc = observedAtUtc,
+                ExtensionVersion = ReadString(message, "extensionVersion", "") is { Length: > 0 } version ? version : null
+            }, cancellationToken);
+        }
+
         return new { success = false, message = $"Unknown native message type: {type}" };
     }
 

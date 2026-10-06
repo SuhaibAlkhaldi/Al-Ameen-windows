@@ -92,6 +92,8 @@ builder.Services.AddSingleton<SecurityEventFactory>();
 builder.Services.AddSingleton<AuditOutbox>();
 builder.Services.AddSingleton<FileInventoryLocalStore>();
 builder.Services.AddSingleton<FileInventoryOutbox>();
+// Phase 7: browser send observations, queued encrypted and drained by FileTransferSyncWorker.
+builder.Services.AddSingleton<FileTransferOutbox>();
 builder.Services.AddSingleton<FileInventoryContentResolver>();
 builder.Services.AddSingleton<SelfWrittenContentRegistry>();
 builder.Services.AddSingleton<FileInventoryInitialSyncRunner>();
@@ -128,6 +130,7 @@ builder.Services.AddHostedService<PrintProtectionMonitor>();
 builder.Services.AddHostedService<DesktopAppProvenanceMonitor>();
 builder.Services.AddHostedService<FileInventoryChangeWatcher>();
 builder.Services.AddHostedService<FileInventorySyncWorker>();
+builder.Services.AddHostedService<FileTransferSyncWorker>();
 builder.Services.AddHostedService<AuditSyncWorker>();
 builder.Services.AddHostedService<WatermarkEscrowSyncWorker>();
 builder.Services.AddHostedService<PolicySyncWorker>();
