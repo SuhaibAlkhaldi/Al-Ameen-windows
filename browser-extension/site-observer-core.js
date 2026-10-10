@@ -5,10 +5,13 @@
 // a chat/display name, which can collide between people, is only MEDIUM); everything else - hashing, the policy
 // check, listening for file selection and the send click, and sending the observation to the agent - lives here once.
 //
-// adapter.readRecipients(root) returns [{ value, role, ordinal }]. `value` is whatever identifies the recipient on
-// that site (a lowercased email address for Gmail/Outlook, a chat/channel display name for Teams); it is reported
-// as-is as recipientValue. `role` is TO/CC for email adapters, or null where the site has no such distinction
-// (e.g. a Teams chat's members are not "to" or "cc").
+// adapter.readRecipients(root) returns [{ value, role, ordinal, kind, evidenceType }]. `value` is whatever identifies
+// the recipient on that site (a lowercased email address for Gmail/Outlook, a chat/channel display name for Teams);
+// it is reported as-is as recipientValue. `role` is TO/CC for email adapters, or null where the site has no such
+// distinction (e.g. a Teams chat's members are not "to" or "cc"). `kind`/`evidenceType` are optional per-recipient
+// overrides of adapter.recipientKind/recipientEvidenceType below - every adapter so far has one fixed kind, but
+// WhatsApp's recipient can be a 1:1 contact or a group, which carry different evidence, decided by readRecipients
+// itself rather than fixed at registration time.
 //
 // How attachments are captured: whenever a file is chosen (file input change, or a drop), this reads the file's bytes
 // and hashes them with SHA-256 immediately, in the page, before any upload happens. That makes it independent of how
@@ -101,9 +104,9 @@
           recipientOrdinal: recipient.ordinal,
           channel: adapter.channel,
           recipientRole: recipient.role ?? null,
-          recipientKind: adapter.recipientKind,
+          recipientKind: recipient.kind ?? adapter.recipientKind,
           recipientValue: recipient.value,
-          recipientEvidenceType: adapter.recipientEvidenceType,
+          recipientEvidenceType: recipient.evidenceType ?? adapter.recipientEvidenceType,
           fileName: attachment.name,
           fileSizeBytes: attachment.size,
           fileHashBytes: attachment.hash,

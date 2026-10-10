@@ -78,6 +78,17 @@
                                        ],
                                 "run_at":  "document_idle",
                                 "all_frames":  false
+                            },
+                            {
+                                "matches":  [
+                                                "https://web.whatsapp.com/*"
+                                            ],
+                                "js":  [
+                                           "site-observer-core.js",
+                                           "adapters/whatsapp.js"
+                                       ],
+                                "run_at":  "document_idle",
+                                "all_frames":  false
                             }
                         ],
     "action":  {
