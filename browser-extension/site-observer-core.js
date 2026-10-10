@@ -1,7 +1,14 @@
-// Phase 7: shared send-observation logic for every site adapter (Gmail, Outlook, ...). A site adapter supplies only
-// its own DOM knowledge (how to find the send button, the recipients, and - optionally - which chosen attachments
-// are still present); everything else - hashing, the policy check, listening for file selection and the send click,
-// and sending the observation to the agent - lives here once.
+// Phase 7: shared send-observation logic for every site adapter (Gmail, Outlook, Teams, ...). A site adapter supplies
+// only its own DOM knowledge (how to find the send button, the recipients, and - optionally - which chosen attachments
+// are still present) plus three identifying constants (channel, recipientKind, recipientEvidenceType - see the
+// frozen Phase 7 plan's evidence-level table, section 4: an email address read from a send form is HIGH evidence;
+// a chat/display name, which can collide between people, is only MEDIUM); everything else - hashing, the policy
+// check, listening for file selection and the send click, and sending the observation to the agent - lives here once.
+//
+// adapter.readRecipients(root) returns [{ value, role, ordinal }]. `value` is whatever identifies the recipient on
+// that site (a lowercased email address for Gmail/Outlook, a chat/channel display name for Teams); it is reported
+// as-is as recipientValue. `role` is TO/CC for email adapters, or null where the site has no such distinction
+// (e.g. a Teams chat's members are not "to" or "cc").
 //
 // How attachments are captured: whenever a file is chosen (file input change, or a drop), this reads the file's bytes
 // and hashes them with SHA-256 immediately, in the page, before any upload happens. That makes it independent of how
@@ -93,10 +100,10 @@
           sendActionId,
           recipientOrdinal: recipient.ordinal,
           channel: adapter.channel,
-          recipientRole: recipient.role,
-          recipientKind: "EMAIL",
-          recipientValue: recipient.email,
-          recipientEvidenceType: "EMAIL_IN_SEND_FORM",
+          recipientRole: recipient.role ?? null,
+          recipientKind: adapter.recipientKind,
+          recipientValue: recipient.value,
+          recipientEvidenceType: adapter.recipientEvidenceType,
           fileName: attachment.name,
           fileSizeBytes: attachment.size,
           fileHashBytes: attachment.hash,

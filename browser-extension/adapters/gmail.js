@@ -24,7 +24,7 @@
       if (!seen.has(email)) seen.set(email, role);
     });
 
-    return [...seen].map(([email, role], index) => ({ email, role, ordinal: index }));
+    return [...seen].map(([email, role], index) => ({ value: email, role, ordinal: index }));
   }
 
   function roleOf(element) {
@@ -57,6 +57,8 @@
 
   window.__dlpFileTransferObserverCore.register({
     channel: "GMAIL",
+    recipientKind: "EMAIL",
+    recipientEvidenceType: "EMAIL_IN_SEND_FORM",
     composeRootOf,
     readRecipients,
     attachmentNamesInWindow,

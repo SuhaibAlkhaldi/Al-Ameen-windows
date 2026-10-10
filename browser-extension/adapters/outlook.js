@@ -53,7 +53,7 @@
       if (!seen.has(email)) seen.set(email, "CC");
     });
 
-    return [...seen].map(([email, role], index) => ({ email, role, ordinal: index }));
+    return [...seen].map(([email, role], index) => ({ value: email, role, ordinal: index }));
   }
 
   function isSendButton(element) {
@@ -62,6 +62,8 @@
 
   window.__dlpFileTransferObserverCore.register({
     channel: "OUTLOOK",
+    recipientKind: "EMAIL",
+    recipientEvidenceType: "EMAIL_IN_SEND_FORM",
     readRecipients,
     isSendButton
     // No composeRootOf: the _TO/_CC group ids already belong to one specific compose, so there is nothing further

@@ -66,6 +66,18 @@
                                        ],
                                 "run_at":  "document_idle",
                                 "all_frames":  false
+                            },
+                            {
+                                "matches":  [
+                                                "https://teams.microsoft.com/*",
+                                                "https://teams.live.com/*"
+                                            ],
+                                "js":  [
+                                           "site-observer-core.js",
+                                           "adapters/teams.js"
+                                       ],
+                                "run_at":  "document_idle",
+                                "all_frames":  false
                             }
                         ],
     "action":  {
