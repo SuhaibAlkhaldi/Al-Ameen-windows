@@ -13,6 +13,14 @@
 // WhatsApp's recipient can be a 1:1 contact or a group, which carry different evidence, decided by readRecipients
 // itself rather than fixed at registration time.
 //
+// A send can be triggered two ways: clicking a send button (adapter.isSendButton(element)), or a keyboard shortcut
+// that never dispatches a click on any button at all - confirmed live on Telegram Web (2026-10-12): pressing Enter
+// sends the message directly from a keydown handler on the input, with no click event on its visible send button
+// in between. Any adapter whose site can send this way must supply adapter.isSendKeydown(event) too, or that entire
+// send path is silently invisible to this file - clicking the on-screen send button is the only thing checked
+// otherwise. Known affected but not yet updated: WhatsApp and Teams likely have the same Enter-to-send path
+// (common to chat UIs) and were never adapted for it - revisit before trusting their file-transfer data as complete.
+//
 // How attachments are captured: whenever a file is chosen (file input change, or a drop), this reads the file's bytes
 // and hashes them with SHA-256 immediately, in the page, before any upload happens. That makes it independent of how
 // a given site actually uploads the file. Files above FULL_HASH_LIMIT_BYTES are not hashed; they are still reported,
@@ -68,13 +76,15 @@
     entry.ready = true;
   }
 
-  async function onSendClicked(button, adapter) {
+  async function onSendTriggered(node, adapter) {
     // Everything DOM-related is read right here, synchronously, before any await below. Some sites (Outlook
     // observed live, 2026-10-07) tear down the compose window as soon as Send is clicked, optimistically, before
     // the message has actually gone out - by the time an awaited call resumes, the recipient fields are gone.
     // A site with no compose boundary of its own (adapter.composeRootOf absent) is read globally; one whose
     // boundary check fails for this click (e.g. a different "Send"-labelled button elsewhere) is skipped.
-    const root = adapter.composeRootOf ? adapter.composeRootOf(button) : document;
+    // `node` is the clicked button for a click-triggered send, or the input element for a keydown-triggered one
+    // (see adapter.isSendKeydown above) - composeRootOf only needs some node inside the compose to walk up from.
+    const root = adapter.composeRootOf ? adapter.composeRootOf(node) : document;
     if (adapter.composeRootOf && !root) return;
 
     const recipients = adapter.readRecipients(root);
@@ -138,9 +148,17 @@
     document.addEventListener("click", event => {
       const button = event.target?.closest?.('[role="button"], button');
       if (button && adapter.isSendButton(button)) {
-        void onSendClicked(button, adapter);
+        void onSendTriggered(button, adapter);
       }
     }, true);
+
+    if (adapter.isSendKeydown) {
+      document.addEventListener("keydown", event => {
+        if (adapter.isSendKeydown(event)) {
+          void onSendTriggered(event.target, adapter);
+        }
+      }, true);
+    }
   }
 
   window.__dlpFileTransferObserverCore = { register };
