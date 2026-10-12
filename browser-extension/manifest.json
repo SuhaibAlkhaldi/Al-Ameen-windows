@@ -89,6 +89,17 @@
                                        ],
                                 "run_at":  "document_idle",
                                 "all_frames":  false
+                            },
+                            {
+                                "matches":  [
+                                                "https://mail.yahoo.com/*"
+                                            ],
+                                "js":  [
+                                           "site-observer-core.js",
+                                           "adapters/yahoo.js"
+                                       ],
+                                "run_at":  "document_idle",
+                                "all_frames":  false
                             }
                         ],
     "action":  {
