@@ -55,7 +55,7 @@
   function isSendKeydown(event) {
     if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return false;
     if (event.isComposing) return false;
-    return event.target?.closest?.(".input-message-input") !== null;
+    return !!event.target?.closest?.(".input-message-input");
   }
 
   window.__dlpFileTransferObserverCore.register({

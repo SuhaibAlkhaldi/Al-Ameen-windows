@@ -22,6 +22,23 @@
 //     could read differently if the account's UI language isn't English), but its inner icon does:
 //     [data-testid="wds-ic-send-filled"]. Icon names aren't localized, so isSendButton checks for that icon inside
 //     the clicked button instead of relying on the aria-label.
+//   - The message box is [data-testid="conversation-compose-box-input"] (confirmed live, 2026-10-12). Pressing
+//     Enter there sends the message without clicking the send button at all - this is WhatsApp Web's long-
+//     standing, non-configurable behavior (unlike Telegram, which has a user preference for Ctrl+Enter instead;
+//     WhatsApp has no equivalent setting). See site-observer-core.js's header for why isSendKeydown exists at
+//     all: without it, this entire send path (very plausibly most real sends, since clicking the on-screen icon
+//     is the less common habit) was invisible to this file until now.
+//   - Confirmed live (2026-10-12) that an attachment's caption box is a SEPARATE element,
+//     [data-testid="media-caption-input-container"], not conversation-compose-box-input - a real send with a
+//     caption typed and Enter pressed there never matched that selector, so a naive isSendKeydown scoped to it
+//     alone would have missed every captioned-attachment send (confirmed live: it fired zero console output,
+//     the same silent-drop shape as a recipient or policy miss). isSendKeydown instead matches ANY
+//     contenteditable textbox with role="textbox" anywhere in the document - both boxes share that shape. An
+//     earlier version of this check also required the target to sit inside #main (WhatsApp's id for the whole
+//     chat panel), on the assumption the caption box rendered inside it like the compose box does; that was
+//     wrong too - confirmed live the caption box's Enter still didn't match with #main required, so it renders
+//     outside #main entirely (likely a portal/overlay), and the #main requirement was dropped. The sidebar's
+//     chat-list search box is a plain non-contenteditable <input>, so it was never at risk of matching either way.
 //
 // Not yet verified: whether sending the very first-ever message to a brand-new contact uses a different send
 // control, the way Teams surprisingly did for a brand-new chat (newMessageCommands-send vs sendMessageCommands-send).
@@ -50,10 +67,17 @@
     return element.querySelector('[data-testid="wds-ic-send-filled"]') !== null;
   }
 
+  function isSendKeydown(event) {
+    if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return false;
+    if (event.isComposing) return false;
+    return !!event.target?.closest?.('[contenteditable="true"][role="textbox"]');
+  }
+
   window.__dlpFileTransferObserverCore.register({
     channel: "WHATSAPP",
     readRecipients,
-    isSendButton
+    isSendButton,
+    isSendKeydown
     // No recipientKind/recipientEvidenceType here - unlike the other adapters, WhatsApp supplies them per
     // recipient (see readRecipients) because a send can go to a 1:1 contact or a group, which carry different
     // evidence. No composeRootOf/isWithinCompose: one active conversation per page, same assumption Outlook/Teams
