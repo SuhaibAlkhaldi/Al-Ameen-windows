@@ -17,6 +17,8 @@ public sealed class DlpPolicy
     public PrintPolicy Print { get; set; } = new();
     public FileOpenProtectionPolicy FileOpenProtection { get; set; } = new();
     public DesktopAppProvenancePolicy DesktopAppProvenance { get; set; } = new();
+    public WhatsAppDesktopObservationPolicy WhatsAppDesktopObservation { get; set; } = new();
+    public TeamsDesktopObservationPolicy TeamsDesktopObservation { get; set; } = new();
     public FileClassificationPolicy FileClassification { get; set; } = new();
     public FileInventorySyncPolicy FileInventorySync { get; set; } = new();
 
@@ -293,6 +295,33 @@ public sealed class DesktopAppProvenancePolicy
         "chrome", "msedge", "firefox", "brave", "opera", "opera_gx", "iexplore",
         "CompanyDlp.Service", "CompanyDlp.Desktop", "CompanyDlp.NativeHost"
     ];
+}
+
+// Phase 8: WhatsApp Desktop recipient detection - the desktop sibling of Phase 7's browser-based
+// FileTransferObservation. Gates WhatsAppDesktopObserver, which reads WhatsApp Desktop's own UI directly via
+// the Chrome DevTools Protocol (CDP), not Windows UI Automation. UIA was tried first and rejected: a live probe
+// (confirmed 2026-10-13) found WhatsApp Desktop's (and "new Outlook"'s) Chromium accessibility tree is not
+// exposed through System.Windows.Automation at all - FindAll against the WebView2 renderer process and every one
+// of its own child processes returned zero UIA elements. The working alternative, also confirmed live
+// 2026-10-13: WhatsApp Desktop's WebView2 is simply rendering the real https://web.whatsapp.com page, and setting
+// WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=<port> as a persistent User-scope environment
+// variable opens a CDP port for it that survives a normal relaunch (Start Menu, taskbar, auto-start), not just
+// one inherited from an already-tainted process. WhatsAppDesktopObserver connects to that port and reads the
+// exact same DOM selectors browser-extension/adapters/whatsapp.js already uses for the web version.
+//
+// A separate on/off switch from FileTransferObservation.Enabled: that flag keeps gating whether PipeServer
+// accepts any FileTransferObserved notice at all (browser or desktop); this flag gates whether
+// WhatsAppDesktopObserver runs at all. Off by default, same rollout-safety reasoning as DesktopAppProvenance.
+public sealed class WhatsAppDesktopObservationPolicy
+{
+    public bool Enabled { get; set; }
+}
+
+// Same shape and same reasoning as WhatsAppDesktopObservationPolicy, for the new Microsoft Teams desktop app's
+// own CDP-based observer (TeamsDesktopObserver). Off by default.
+public sealed class TeamsDesktopObservationPolicy
+{
+    public bool Enabled { get; set; }
 }
 
 // File Inventory Report feature: syncs a current-state view of every file under

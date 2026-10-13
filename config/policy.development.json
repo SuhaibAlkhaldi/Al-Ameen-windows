@@ -148,6 +148,12 @@
       "CompanyDlp.NativeHost"
     ]
   },
+  "whatsAppDesktopObservation": {
+    "enabled": true
+  },
+  "teamsDesktopObservation": {
+    "enabled": true
+  },
   "fileClassification": {
     "enabled": true,
     "provider": "AiApi",

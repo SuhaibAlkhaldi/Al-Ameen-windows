@@ -128,6 +128,8 @@ builder.Services.AddHostedService<DlpWorker>();
 // share a poll cadence meant for screen-recording detection).
 builder.Services.AddHostedService<PrintProtectionMonitor>();
 builder.Services.AddHostedService<DesktopAppProvenanceMonitor>();
+builder.Services.AddHostedService<WhatsAppDesktopObserver>();
+builder.Services.AddHostedService<TeamsDesktopObserver>();
 builder.Services.AddHostedService<FileInventoryChangeWatcher>();
 builder.Services.AddHostedService<FileInventorySyncWorker>();
 builder.Services.AddHostedService<FileTransferSyncWorker>();

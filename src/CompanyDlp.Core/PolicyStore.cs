@@ -73,6 +73,9 @@ public sealed class PolicyStore(
         // DesktopAppProvenance at all, so a forgotten entry here would silently reset it (Enabled and
         // ExcludedProcessNames included) to C# type defaults on every remote/cached policy load.
         target.DesktopAppProvenance = localSource.DesktopAppProvenance;
+        // Same bug class again (Phase 8) - the backend doesn't model WhatsAppDesktopObservation either.
+        target.WhatsAppDesktopObservation = localSource.WhatsAppDesktopObservation;
+        target.TeamsDesktopObservation = localSource.TeamsDesktopObservation;
         target.FileClassification = localSource.FileClassification;
         // Same bug class again (third time this codebase has hit it - FileOpenProtection, then
         // DesktopAppProvenance, now this) - the backend doesn't model FileInventorySync either, so a
