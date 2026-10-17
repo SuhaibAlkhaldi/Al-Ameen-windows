@@ -12,6 +12,7 @@ var builder = Host.CreateApplicationBuilder(hostArguments);
 
 builder.Services.AddWindowsService(options => options.ServiceName = "Al-Ameen Service");
 builder.Services.AddHttpClient("CompanyDlp.Backend");
+builder.Services.AddHttpClient("CompanyDlp.Graph");
 
 builder.Services.AddSingleton<MachineDataProtector>();
 builder.Services.AddSingleton<PolicyStore>();
@@ -130,6 +131,7 @@ builder.Services.AddHostedService<PrintProtectionMonitor>();
 builder.Services.AddHostedService<DesktopAppProvenanceMonitor>();
 builder.Services.AddHostedService<WhatsAppDesktopObserver>();
 builder.Services.AddHostedService<TeamsDesktopObserver>();
+builder.Services.AddHostedService<OutlookGraphObserver>();
 builder.Services.AddHostedService<FileInventoryChangeWatcher>();
 builder.Services.AddHostedService<FileInventorySyncWorker>();
 builder.Services.AddHostedService<FileTransferSyncWorker>();

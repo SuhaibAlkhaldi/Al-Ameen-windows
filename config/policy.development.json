@@ -154,6 +154,12 @@
   "teamsDesktopObservation": {
     "enabled": true
   },
+  "outlookGraphObservation": {
+    "enabled": false,
+    "clientId": "",
+    "tenantId": "common",
+    "pollSeconds": 30
+  },
   "fileClassification": {
     "enabled": true,
     "provider": "AiApi",

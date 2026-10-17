@@ -19,6 +19,7 @@ public sealed class DlpPolicy
     public DesktopAppProvenancePolicy DesktopAppProvenance { get; set; } = new();
     public WhatsAppDesktopObservationPolicy WhatsAppDesktopObservation { get; set; } = new();
     public TeamsDesktopObservationPolicy TeamsDesktopObservation { get; set; } = new();
+    public OutlookGraphObservationPolicy OutlookGraphObservation { get; set; } = new();
     public FileClassificationPolicy FileClassification { get; set; } = new();
     public FileInventorySyncPolicy FileInventorySync { get; set; } = new();
 
@@ -322,6 +323,34 @@ public sealed class WhatsAppDesktopObservationPolicy
 public sealed class TeamsDesktopObservationPolicy
 {
     public bool Enabled { get; set; }
+}
+
+// Phase 8: Outlook (classic or new, desktop or web - any client) recipient observation via Microsoft Graph,
+// not the CDP/UIA approach every other desktop channel uses. Confirmed live 2026-10-13 that both the
+// WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS environment variable and the WebView2 registry policy override that
+// work for WhatsApp Desktop/Teams Desktop have no effect on "new Outlook for Windows" (olk.exe) - it never
+// opens a CDP port either way, most likely due to tighter MSIX AppContainer sandboxing. Windows UI Automation
+// was a dead end too, even with Narrator running to force Chromium's full accessibility tree.
+//
+// OutlookGraphObserver instead polls the signed-in user's own Sent Items via Microsoft Graph
+// (GET /me/mailFolders('sentitems')/messages) after a message has actually been sent, rather than
+// intercepting the compose/send action live - confirmed live via Graph Explorer that this reads real
+// recipients (To/Cc/Bcc - Bcc is new: no other channel can see it) and real attachment content
+// (contentBytes, enough to hash the same way every other channel does), using a personal Microsoft account
+// with no Exchange Online, no tenant admin, and no registry/UIA/CDP tricks.
+//
+// ClientId must be an app registered for this purpose (Azure AD / Microsoft Entra app registration,
+// "Allow public client flows" = Yes, delegated Mail.Read, multi-tenant + personal Microsoft accounts
+// supported) - left blank here deliberately; the observer stays off (logs a warning, does nothing) until a
+// real ClientId is configured. TenantId "common" supports both personal Microsoft accounts and any Microsoft
+// 365 organization signing in with the same app; a specific tenant GUID can be used instead to restrict to
+// one organization.
+public sealed class OutlookGraphObservationPolicy
+{
+    public bool Enabled { get; set; }
+    public string ClientId { get; set; } = "";
+    public string TenantId { get; set; } = "common";
+    public int PollSeconds { get; set; } = 30;
 }
 
 // File Inventory Report feature: syncs a current-state view of every file under

@@ -17,6 +17,9 @@
     <!-- DesktopAppProvenanceMonitor's network-side ETW consumption (see its class comment) - official
          Microsoft package (MIT), first external dependency for this feature; approved 2026-09-09. -->
     <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="3.2.6" />
+    <!-- OutlookGraphObserver's sign-in to Microsoft Graph (see its class comment) - official Microsoft
+         package (MIT), approved 2026-10-13. -->
+    <PackageReference Include="Microsoft.Identity.Client" Version="4.91.0" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\CompanyDlp.Contracts\CompanyDlp.Contracts.csproj" />
