@@ -5,7 +5,14 @@ using CompanyDlp.Contracts;
 
 namespace CompanyDlp.Service;
 
-public sealed class UsbDeviceInventory(ILogger<UsbDeviceInventory> logger)
+// Contract extracted for the cross-platform plan (see file-tracking-feature-status memory) - a future
+// macOS/Linux build provides its own USB-enumeration implementation behind this same name.
+public interface IUsbDeviceInventory
+{
+    IReadOnlyList<UsbDeviceBundleInfo> GetPresentBundles();
+}
+
+public sealed class UsbDeviceInventory(ILogger<UsbDeviceInventory> logger) : IUsbDeviceInventory
 {
     private static readonly HashSet<string> ForbiddenClasses = new(StringComparer.OrdinalIgnoreCase)
     {

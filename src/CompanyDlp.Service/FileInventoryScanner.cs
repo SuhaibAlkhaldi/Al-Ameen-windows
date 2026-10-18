@@ -20,7 +20,7 @@ public sealed class FileInventoryScanner(
     FileClassificationCache cache,
     FileClassificationStatusStore statusStore,
     DictionaryRuleStore dictionaryRuleStore,
-    InteractiveUserContextProvider interactiveUserContextProvider,
+    IInteractiveUserContextProvider interactiveUserContextProvider,
     PermissionEvaluator permissionEvaluator,
     AgentIdentityProvider identityProvider,
     WatermarkEscrowStore escrowStore,
@@ -29,6 +29,7 @@ public sealed class FileInventoryScanner(
     FileProtectionEngine fileProtectionEngine,
     EncryptedFileHashStore encryptedFileHashStore,
     SelfWrittenContentRegistry selfWrittenContentRegistry,
+    IWatchedFolderPathResolver watchedFolderPathResolver,
     ILogger<FileInventoryScanner> logger)
 {
     // Per-path last-seen write time - avoids re-hashing and re-classifying every file in the
@@ -122,7 +123,7 @@ public sealed class FileInventoryScanner(
         // the interactive user's SID (already fetched above via GetActiveConsoleUser for
         // classification requests anyway) through the ProfileList registry key - the correct,
         // session-agnostic way for a SYSTEM-account service to find another user's profile folder.
-        var interactiveProfilePath = WatchedFolderPathResolver.ResolveInteractiveUserProfilePath(context.UserSid, logger);
+        var interactiveProfilePath = watchedFolderPathResolver.ResolveInteractiveUserProfilePath(context.UserSid, logger);
 
         // try/finally, not a plain sequential call after the loop: every early `return` below (
         // cancellation mid-walk) must still flush whatever SaveThrottled() left sitting in memory -
@@ -136,7 +137,7 @@ public sealed class FileInventoryScanner(
             {
                 if (cancellationToken.IsCancellationRequested) return;
 
-                var expanded = WatchedFolderPathResolver.ExpandWatchedFolderPath(folder, interactiveProfilePath);
+                var expanded = watchedFolderPathResolver.ExpandWatchedFolderPath(folder, interactiveProfilePath);
                 if (!Directory.Exists(expanded)) continue;
 
                 foreach (var path in WatchedFolderEnumerator.EnumerateFilesSafely(expanded, logger))

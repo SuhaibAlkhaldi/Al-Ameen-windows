@@ -5,10 +5,12 @@ namespace CompanyDlp.Service;
 public sealed class HeartbeatWorker(
     PolicyStore policyStore,
     AgentIdentityProvider identityProvider,
-    AuditOutbox outbox,
+    IAuditOutbox outbox,
     BackendApiClient backendApiClient,
     TrustedClock trustedClock,
     PolicyRefreshSignal refreshSignal,
+    IWindowsEditionReader windowsEditionReader,
+    IDeviceHardwareInfoReader deviceHardwareInfoReader,
     ILogger<HeartbeatWorker> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -29,9 +31,9 @@ public sealed class HeartbeatWorker(
                         MachineName = identity.MachineName,
                         AgentVersion = identity.AgentVersion,
                         OsVersion = Environment.OSVersion.VersionString,
-                        OperatingSystemEdition = WindowsEditionReader.Read().DisplayName,
-                        SerialNumber = DeviceHardwareInfoReader.GetSerialNumber(),
-                        MacAddress = DeviceHardwareInfoReader.GetPrimaryMacAddress(),
+                        OperatingSystemEdition = windowsEditionReader.Read().DisplayName,
+                        SerialNumber = deviceHardwareInfoReader.GetSerialNumber(),
+                        MacAddress = deviceHardwareInfoReader.GetPrimaryMacAddress(),
                         LastAppliedPolicyVersion = policyStore.CurrentRemoteVersion,
                         PendingAuditEventCount = status.PendingCount
                     }, stoppingToken);

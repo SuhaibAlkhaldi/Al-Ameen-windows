@@ -16,7 +16,7 @@ public sealed record FileInventoryOutboxItem(string Path, FileInventoryChangeEnv
 // that specific impersonation pitfall doesn't apply and isn't worked around here.
 public sealed class FileInventoryOutbox(
     PolicyStore policyStore,
-    MachineDataProtector protector,
+    IMachineDataProtector protector,
     ILogger<FileInventoryOutbox> logger)
 {
     private readonly SemaphoreSlim _gate = new(1, 1);

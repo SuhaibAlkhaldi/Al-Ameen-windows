@@ -4,11 +4,19 @@ using CompanyDlp.Contracts;
 
 namespace CompanyDlp.Service;
 
+// Contract extracted for the cross-platform plan (see file-tracking-feature-status memory) - a future
+// macOS/Linux build provides its own app-control-audit implementation (e.g. reading auditd/eBPF on
+// Linux) behind this same name.
+public interface IWindowsAppControlAuditMonitor
+{
+    Task TickAsync(CancellationToken cancellationToken);
+}
+
 public sealed partial class WindowsAppControlAuditMonitor(
     PolicyStore policyStore,
-    InteractiveUserContextProvider interactiveUserContextProvider,
+    IInteractiveUserContextProvider interactiveUserContextProvider,
     AuditLogger auditLogger,
-    ILogger<WindowsAppControlAuditMonitor> logger)
+    ILogger<WindowsAppControlAuditMonitor> logger) : IWindowsAppControlAuditMonitor
 {
     private readonly HashSet<long> _seenRecordIds = [];
     private DateTimeOffset _nextScanAtUtc;

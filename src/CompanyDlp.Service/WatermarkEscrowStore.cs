@@ -48,7 +48,7 @@ public sealed record WatermarkEscrowRecord(
     // constant will trigger again for whichever files haven't been touched since.
     int TileFormatVersion = 0);
 
-public sealed class WatermarkEscrowStore(PolicyStore policyStore, MachineDataProtector protector, ILogger<WatermarkEscrowStore> logger)
+public sealed class WatermarkEscrowStore(PolicyStore policyStore, IMachineDataProtector protector, ILogger<WatermarkEscrowStore> logger)
 {
     private const string PendingKeyPurpose = "CompanyDlp.WatermarkEscrow.PendingDek.v1";
 

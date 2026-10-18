@@ -6,7 +6,7 @@ namespace CompanyDlp.Service;
 // Persists OutlookGraphObserver's MSAL token cache to disk, DPAPI-encrypted via MachineDataProtector, so the
 // one-time device-code sign-in survives a service restart. Same atomic-write-then-rename pattern as
 // FileTransferOutbox/PolicyStore's own file writes.
-internal sealed class OutlookGraphTokenCache(MachineDataProtector protector, ILogger logger)
+internal sealed class OutlookGraphTokenCache(IMachineDataProtector protector, ILogger logger)
 {
     private const string Purpose = "CompanyDlp.OutlookGraphTokenCache.v1";
 

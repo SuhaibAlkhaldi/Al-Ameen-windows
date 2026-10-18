@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging;
 namespace CompanyDlp.Core;
 
 public sealed class PolicyStore(
-    MachineDataProtector dataProtector,
+    IMachineDataProtector dataProtector,
     ILogger<PolicyStore> logger)
 {
     private readonly object _sync = new();

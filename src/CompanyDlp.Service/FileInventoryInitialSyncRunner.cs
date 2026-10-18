@@ -16,20 +16,21 @@ public sealed class FileInventoryInitialSyncRunner(
     FileInventoryLocalStore localStore,
     FileInventoryContentResolver contentResolver,
     FileProvenanceStore provenanceStore,
-    InteractiveUserContextProvider interactiveUserContextProvider,
+    IInteractiveUserContextProvider interactiveUserContextProvider,
+    IWatchedFolderPathResolver watchedFolderPathResolver,
     ILogger<FileInventoryInitialSyncRunner> logger)
 {
     public async Task RunAsync(DlpPolicy policy, CancellationToken cancellationToken)
     {
         var context = interactiveUserContextProvider.GetActiveConsoleUser();
-        var interactiveProfilePath = WatchedFolderPathResolver.ResolveInteractiveUserProfilePath(context.UserSid, logger);
+        var interactiveProfilePath = watchedFolderPathResolver.ResolveInteractiveUserProfilePath(context.UserSid, logger);
 
         try
         {
             foreach (var folder in policy.FileClassification.WatchedFolders)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var expanded = WatchedFolderPathResolver.ExpandWatchedFolderPath(folder, interactiveProfilePath);
+                var expanded = watchedFolderPathResolver.ExpandWatchedFolderPath(folder, interactiveProfilePath);
                 if (!Directory.Exists(expanded)) continue;
 
                 foreach (var path in WatchedFolderEnumerator.EnumerateFilesSafely(expanded, logger))

@@ -15,13 +15,14 @@ public sealed class FileInventoryReconciliationRunner(
     FileInventoryLocalStore localStore,
     FileInventoryContentResolver contentResolver,
     FileProvenanceStore provenanceStore,
-    InteractiveUserContextProvider interactiveUserContextProvider,
+    IInteractiveUserContextProvider interactiveUserContextProvider,
+    IWatchedFolderPathResolver watchedFolderPathResolver,
     ILogger<FileInventoryReconciliationRunner> logger)
 {
     public async Task RunAsync(DlpPolicy policy, CancellationToken cancellationToken)
     {
         var context = interactiveUserContextProvider.GetActiveConsoleUser();
-        var interactiveProfilePath = WatchedFolderPathResolver.ResolveInteractiveUserProfilePath(context.UserSid, logger);
+        var interactiveProfilePath = watchedFolderPathResolver.ResolveInteractiveUserProfilePath(context.UserSid, logger);
         var seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         try
@@ -29,7 +30,7 @@ public sealed class FileInventoryReconciliationRunner(
             foreach (var folder in policy.FileClassification.WatchedFolders)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var expanded = WatchedFolderPathResolver.ExpandWatchedFolderPath(folder, interactiveProfilePath);
+                var expanded = watchedFolderPathResolver.ExpandWatchedFolderPath(folder, interactiveProfilePath);
                 if (!Directory.Exists(expanded)) continue;
 
                 foreach (var path in WatchedFolderEnumerator.EnumerateFilesSafely(expanded, logger))

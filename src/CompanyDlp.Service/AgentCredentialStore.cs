@@ -5,7 +5,7 @@ namespace CompanyDlp.Service;
 
 public sealed class AgentCredentialStore(
     PolicyStore policyStore,
-    MachineDataProtector dataProtector)
+    IMachineDataProtector dataProtector)
 {
     private const string PurposePrefix = "CompanyDlp.AgentCredential.v1:";
 

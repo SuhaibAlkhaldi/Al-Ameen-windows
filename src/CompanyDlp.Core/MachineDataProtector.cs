@@ -5,7 +5,22 @@ using System.Text;
 
 namespace CompanyDlp.Core;
 
-public sealed class MachineDataProtector
+// Contract extracted for the cross-platform plan (see file-tracking-feature-status memory) - a future
+// macOS/Linux build provides its own encryption-at-rest implementation (Keychain on macOS,
+// libsecret/kernel keyring on Linux, instead of Windows DPAPI) behind this same name. This is the
+// widest-reaching interface in the plan - every local disk-backed store that encrypts at rest
+// (AuditOutbox, FileInventoryOutbox, FileTransferOutbox, FileKeyProtector, PolicyStore,
+// AgentCredentialStore, TrustedClock, PermissionLifecycleMonitor, WatermarkEscrowStore,
+// OutlookGraphTokenCache/Observer) depends on it.
+public interface IMachineDataProtector
+{
+    byte[] Protect(byte[] clearData);
+    byte[] Unprotect(byte[] protectedData);
+    byte[] Protect(byte[] clearData, string purpose);
+    byte[] Unprotect(byte[] protectedData, string purpose);
+}
+
+public sealed class MachineDataProtector : IMachineDataProtector
 {
     private const uint CryptProtectUiForbidden = 0x1;
     private const uint CryptProtectLocalMachine = 0x4;

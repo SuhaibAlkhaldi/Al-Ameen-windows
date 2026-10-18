@@ -4,7 +4,17 @@ namespace CompanyDlp.Service;
 // policy.FileClassification.WatchedFolders to real paths from a service that runs as LocalSystem.
 // Originally private to FileInventoryScanner; extracted here rather than duplicated so the fix below
 // can never quietly drift out of sync between the two call sites.
-public static class WatchedFolderPathResolver
+// Contract extracted for the cross-platform plan (see file-tracking-feature-status memory) - a future
+// macOS/Linux build provides its own watched-folder-path-resolution implementation (no %USERPROFILE%/
+// registry concept there) behind this same name. Converted from a static class to an instance class
+// (interfaces cannot be implemented by static classes in C#).
+public interface IWatchedFolderPathResolver
+{
+    string ExpandWatchedFolderPath(string folder, string? interactiveProfilePath);
+    string? ResolveInteractiveUserProfilePath(string? userSid, ILogger logger);
+}
+
+public sealed class WatchedFolderPathResolver : IWatchedFolderPathResolver
 {
     private const string UserProfileToken = "%USERPROFILE%";
 
@@ -18,7 +28,7 @@ public static class WatchedFolderPathResolver
     // any other environment variable a WatchedFolders entry might use still goes through normal
     // machine/service-account expansion, correct for anything that isn't specifically "this employee's
     // own profile".
-    public static string ExpandWatchedFolderPath(string folder, string? interactiveProfilePath)
+    public string ExpandWatchedFolderPath(string folder, string? interactiveProfilePath)
     {
         if (!string.IsNullOrEmpty(interactiveProfilePath) &&
             folder.StartsWith(UserProfileToken, StringComparison.OrdinalIgnoreCase))
@@ -35,7 +45,7 @@ public static class WatchedFolderPathResolver
     // Returns null (not a throw) for "no interactive user right now" (locked/logged-off session) or
     // "SID not found" - both are legitimate, common states callers must degrade out of gracefully
     // rather than blow up over.
-    public static string? ResolveInteractiveUserProfilePath(string? userSid, ILogger logger)
+    public string? ResolveInteractiveUserProfilePath(string? userSid, ILogger logger)
     {
         if (string.IsNullOrWhiteSpace(userSid)) return null;
         try

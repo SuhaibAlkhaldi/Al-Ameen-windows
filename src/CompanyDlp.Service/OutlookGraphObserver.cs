@@ -34,7 +34,7 @@ namespace CompanyDlp.Service;
 public sealed class OutlookGraphObserver(
     PolicyStore policyStore,
     FileTransferOutbox fileTransferOutbox,
-    MachineDataProtector protector,
+    IMachineDataProtector protector,
     IHttpClientFactory httpClientFactory,
     ILogger<OutlookGraphObserver> logger) : BackgroundService
 {

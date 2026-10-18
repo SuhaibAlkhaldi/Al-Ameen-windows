@@ -5,7 +5,15 @@ using CompanyDlp.Contracts;
 
 namespace CompanyDlp.Service;
 
-public sealed class InteractiveUserContextProvider(ILogger<InteractiveUserContextProvider> logger)
+// Contract extracted for the cross-platform plan (see file-tracking-feature-status memory) - a future
+// macOS/Linux build provides its own "who is the logged-in interactive user" implementation behind
+// this same name.
+public interface IInteractiveUserContextProvider
+{
+    ClientContext GetActiveConsoleUser();
+}
+
+public sealed class InteractiveUserContextProvider(ILogger<InteractiveUserContextProvider> logger) : IInteractiveUserContextProvider
 {
     // Field evidence (2026-08-16, DESKTOP-M5K7SVM): 12 of 26 CompanyDlp.Service.exe threads observed
     // stuck in Wait/EventPairLow (the classic signature of a thread blocked on an LPC/RPC call into a

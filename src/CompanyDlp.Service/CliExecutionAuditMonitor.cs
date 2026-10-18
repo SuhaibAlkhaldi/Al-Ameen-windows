@@ -21,11 +21,18 @@ namespace CompanyDlp.Service;
 // CliExecutionPolicyManager.SelfHealLegacyAppLockerExeEnforcement resets a legacy device's stale Exe
 // rule collection - do not "fix" the audit gap by writing AppLocker rules again; that reintroduces the
 // Shell-freeze bug this design exists to avoid.
+// Contract extracted for the cross-platform plan (see file-tracking-feature-status memory) - a future
+// macOS/Linux build provides its own CLI-audit implementation behind this same name.
+public interface ICliExecutionAuditMonitor
+{
+    Task TickAsync(CancellationToken cancellationToken);
+}
+
 public sealed partial class CliExecutionAuditMonitor(
     PolicyStore policyStore,
-    InteractiveUserContextProvider interactiveUserContextProvider,
+    IInteractiveUserContextProvider interactiveUserContextProvider,
     AuditLogger auditLogger,
-    ILogger<CliExecutionAuditMonitor> logger)
+    ILogger<CliExecutionAuditMonitor> logger) : ICliExecutionAuditMonitor
 {
     private readonly HashSet<long> _seenRecordIds = [];
     private DateTimeOffset _nextScanAtUtc;

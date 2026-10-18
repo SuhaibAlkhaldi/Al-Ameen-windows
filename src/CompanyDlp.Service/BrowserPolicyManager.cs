@@ -4,14 +4,21 @@ using Microsoft.Win32;
 
 namespace CompanyDlp.Service;
 
+// Contract extracted for the cross-platform plan (see file-tracking-feature-status memory) - a future
+// macOS/Linux build provides its own browser-policy implementation behind this same name.
+public interface IBrowserPolicyManager
+{
+    Task ApplyMachinePoliciesAsync(CancellationToken cancellationToken = default);
+}
+
 public sealed class BrowserPolicyManager(
     PolicyStore policyStore,
     PermissionEvaluator permissionEvaluator,
     AgentIdentityProvider identityProvider,
-    InteractiveUserContextProvider interactiveUserContextProvider,
-    ExtensionHealthChecker extensionHealthChecker,
+    IInteractiveUserContextProvider interactiveUserContextProvider,
+    IExtensionHealthChecker extensionHealthChecker,
     AuditLogger auditLogger,
-    ILogger<BrowserPolicyManager> logger)
+    ILogger<BrowserPolicyManager> logger) : IBrowserPolicyManager
 {
     private const string EdgePath = @"SOFTWARE\Policies\Microsoft\Edge";
     private const string ChromePath = @"SOFTWARE\Policies\Google\Chrome";

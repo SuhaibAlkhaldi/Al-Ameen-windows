@@ -13,11 +13,18 @@ namespace CompanyDlp.Service;
 // already uses for ClipboardCopySensitive. EnableCommandAuditingPrerequisites() in
 // CliExecutionPolicyManager is what turns these two event sources on in the first place; this monitor
 // is a no-op (nothing to read) until that has run at least once.
+// Contract extracted for the cross-platform plan (see file-tracking-feature-status memory) - a future
+// macOS/Linux build provides its own sensitive-command-detection implementation behind this same name.
+public interface ICliSensitiveCommandMonitor
+{
+    Task TickAsync(CancellationToken cancellationToken);
+}
+
 public sealed partial class CliSensitiveCommandMonitor(
     PolicyStore policyStore,
-    InteractiveUserContextProvider interactiveUserContextProvider,
+    IInteractiveUserContextProvider interactiveUserContextProvider,
     AuditLogger auditLogger,
-    ILogger<CliSensitiveCommandMonitor> logger)
+    ILogger<CliSensitiveCommandMonitor> logger) : ICliSensitiveCommandMonitor
 {
     private readonly HashSet<long> _seenPowerShellRecordIds = [];
     private readonly HashSet<long> _seenSecurityRecordIds = [];

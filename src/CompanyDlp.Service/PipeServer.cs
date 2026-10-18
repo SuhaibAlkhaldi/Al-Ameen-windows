@@ -13,6 +13,15 @@ using CompanyDlp.Core;
 
 namespace CompanyDlp.Service;
 
+// Contract extracted for the cross-platform plan (see file-tracking-feature-status memory) - a future
+// macOS/Linux build provides its own IPC transport (e.g. Unix domain sockets instead of Windows named
+// pipes) behind this same name, while everything this class dispatches to (classification, policy,
+// audit) stays the shared Core logic.
+public interface IPipeServer
+{
+    Task RunAsync(CancellationToken cancellationToken);
+}
+
 public sealed class PipeServer(
     PolicyStore policyStore,
     AgentIdentityProvider identityProvider,
@@ -23,15 +32,15 @@ public sealed class PipeServer(
     FileClassificationCache fileClassificationCache,
     FileClassificationStatusResolver fileClassificationStatusResolver,
     AuditLogger auditLogger,
-    AuditOutbox auditOutbox,
+    IAuditOutbox auditOutbox,
     FileProtectionCoordinator fileProtectionCoordinator,
-    BrowserPolicyManager browserPolicyManager,
-    UsbProtectionMonitor usbMonitor,
+    IBrowserPolicyManager browserPolicyManager,
+    IUsbProtectionMonitor usbMonitor,
     RuntimeOverrideStore runtimeOverrides,
     NotificationStore notificationStore,
     FileProvenanceStore fileProvenanceStore,
     FileTransferOutbox fileTransferOutbox,
-    ILogger<PipeServer> logger)
+    ILogger<PipeServer> logger) : IPipeServer
 {
     private readonly DateTimeOffset _startedAt = DateTimeOffset.UtcNow;
     private readonly IpcReplayGuard _replayGuard = new();

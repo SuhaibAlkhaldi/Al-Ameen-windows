@@ -7,9 +7,18 @@ namespace CompanyDlp.Service;
 // This piece never had anything to do with AppLocker itself - it's a plain registry read of the
 // installed Windows edition, used by HeartbeatWorker to report OperatingSystemEdition to the backend -
 // so it survives as its own small utility instead of being deleted along with the rest of that file.
-public static class WindowsEditionReader
+// Contract extracted for the cross-platform plan (see file-tracking-feature-status memory) - a future
+// macOS/Linux build provides its own OS-edition-reading implementation behind this same name.
+// Converted from a static class to an instance class (interfaces cannot be implemented by static
+// classes in C#).
+public interface IWindowsEditionReader
 {
-    public static (string EditionId, string DisplayName) Read()
+    (string EditionId, string DisplayName) Read();
+}
+
+public sealed class WindowsEditionReader : IWindowsEditionReader
+{
+    public (string EditionId, string DisplayName) Read()
     {
         try
         {

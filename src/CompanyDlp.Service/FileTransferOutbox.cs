@@ -15,7 +15,7 @@ public sealed record FileTransferOutboxItem(string Path, FileTransferObservation
 // done. A failed response leaves every item in place to retry.
 public sealed class FileTransferOutbox(
     PolicyStore policyStore,
-    MachineDataProtector protector,
+    IMachineDataProtector protector,
     ILogger<FileTransferOutbox> logger)
 {
     private readonly SemaphoreSlim _gate = new(1, 1);

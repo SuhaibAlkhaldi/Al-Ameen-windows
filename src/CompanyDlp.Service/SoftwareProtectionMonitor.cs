@@ -7,13 +7,20 @@ using CompanyDlp.Core;
 
 namespace CompanyDlp.Service;
 
+// Contract extracted for the cross-platform plan (see file-tracking-feature-status memory) - a future
+// macOS/Linux build provides its own installed-software-detection implementation behind this same name.
+public interface ISoftwareProtectionMonitor
+{
+    Task TickAsync(CancellationToken cancellationToken);
+}
+
 public sealed class SoftwareProtectionMonitor(
     PolicyStore policyStore,
     AgentIdentityProvider identityProvider,
     PermissionEvaluator permissionEvaluator,
     AuditLogger auditLogger,
     NotificationStore notificationStore,
-    ILogger<SoftwareProtectionMonitor> logger)
+    ILogger<SoftwareProtectionMonitor> logger) : ISoftwareProtectionMonitor
 {
     private readonly ProcessObservationTracker _processTracker = new();
     private DateTimeOffset _nextScanAtUtc;

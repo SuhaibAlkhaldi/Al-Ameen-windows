@@ -62,6 +62,7 @@ public sealed class FileClassificationStatusResolverTests : IDisposable
             fileProtectionEngine: null!,
             encryptedFileHashStore: null!,
             selfWrittenContentRegistry: new SelfWrittenContentRegistry(),
+            watchedFolderPathResolver: null!,
             NullLogger<FileInventoryScanner>.Instance);
 
         // engine/encryptedFileHashStore are only touched by ResolveEncryptedAsync's .dlpenc branch -

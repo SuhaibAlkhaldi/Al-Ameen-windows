@@ -11,14 +11,25 @@ namespace CompanyDlp.Service;
 // is exactly the kind of call that must never be repeated more often than necessary (see
 // InteractiveUserContextProvider's field-evidence comment on what an unbounded/frequent WMI call did
 // to this same process on 2026-08-16).
-public static class DeviceHardwareInfoReader
+// Contract extracted for the cross-platform plan (see file-tracking-feature-status memory) - a future
+// macOS/Linux build provides its own hardware-identifier implementation behind this same name.
+// Converted from a static class to an instance class (interfaces cannot be implemented by static
+// classes in C#) - the per-process caching behavior is unchanged since this is registered as a
+// singleton, so _cachedSerialNumber/_cachedMacAddress still live for the whole service lifetime.
+public interface IDeviceHardwareInfoReader
+{
+    string GetSerialNumber();
+    string GetPrimaryMacAddress();
+}
+
+public sealed class DeviceHardwareInfoReader : IDeviceHardwareInfoReader
 {
     private static readonly TimeSpan WmiQueryTimeout = TimeSpan.FromSeconds(5);
 
-    private static string? _cachedSerialNumber;
-    private static string? _cachedMacAddress;
+    private string? _cachedSerialNumber;
+    private string? _cachedMacAddress;
 
-    public static string GetSerialNumber()
+    public string GetSerialNumber()
     {
         if (_cachedSerialNumber != null)
             return _cachedSerialNumber;
@@ -30,7 +41,7 @@ public static class DeviceHardwareInfoReader
         return value;
     }
 
-    public static string GetPrimaryMacAddress()
+    public string GetPrimaryMacAddress()
     {
         if (_cachedMacAddress != null)
             return _cachedMacAddress;

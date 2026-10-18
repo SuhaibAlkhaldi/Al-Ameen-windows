@@ -7,10 +7,18 @@ using CompanyDlp.Contracts;
 
 namespace CompanyDlp.Service;
 
+// Contract extracted for the cross-platform plan (see file-tracking-feature-status memory) - a future
+// macOS/Linux build provides its own interactive-session-agent-launching implementation behind this
+// same name (e.g. a LaunchAgent/systemd user-session unit instead of a per-session Windows process).
+public interface ISessionAgentSupervisor
+{
+    Task TickAsync(CancellationToken cancellationToken);
+}
+
 public sealed class SessionAgentSupervisor(
     PolicyStore policyStore,
     AuditLogger auditLogger,
-    ILogger<SessionAgentSupervisor> logger)
+    ILogger<SessionAgentSupervisor> logger) : ISessionAgentSupervisor
 {
     private DateTimeOffset _nextScanAtUtc;
     private DateTimeOffset _nextMissingExecutableWarningAtUtc;

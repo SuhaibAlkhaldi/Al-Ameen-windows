@@ -26,7 +26,16 @@ namespace CompanyDlp.Service;
 /// working right now, and this avoids adding a second, independent profile-enumeration mechanism next to
 /// the one uninstall-production.ps1 already has for a different purpose.
 /// </summary>
-public sealed class ExtensionHealthChecker(ILogger<ExtensionHealthChecker> logger)
+// Contract extracted for the cross-platform plan (see file-tracking-feature-status memory) - a future
+// macOS/Linux build provides its own browser-profile-inspection implementation behind this same name.
+public interface IExtensionHealthChecker
+{
+    bool IsChromeExtensionPresent(string userSid, string extensionId);
+    bool IsEdgeExtensionPresent(string userSid, string extensionId);
+    bool IsFirefoxExtensionPresent(string userSid, string extensionId);
+}
+
+public sealed class ExtensionHealthChecker(ILogger<ExtensionHealthChecker> logger) : IExtensionHealthChecker
 {
     public bool IsChromeExtensionPresent(string userSid, string extensionId) =>
         IsChromiumExtensionPresent(userSid, extensionId, @"Google\Chrome\User Data");

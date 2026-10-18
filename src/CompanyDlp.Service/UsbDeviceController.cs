@@ -3,7 +3,15 @@ using System.Runtime.InteropServices;
 
 namespace CompanyDlp.Service;
 
-public sealed class UsbDeviceController(ILogger<UsbDeviceController> logger)
+// Contract extracted so a future macOS/Linux build can provide its own USB-blocking implementation
+// behind the same name, while this Windows implementation (pnputil + CM_* device-node APIs) stays
+// untouched. See file-tracking-feature-status memory for the cross-platform plan this is part of.
+public interface IUsbDeviceController
+{
+    Task<bool> DisableAsync(string rootInstanceId, CancellationToken cancellationToken = default);
+}
+
+public sealed class UsbDeviceController(ILogger<UsbDeviceController> logger) : IUsbDeviceController
 {
     public async Task<bool> DisableAsync(string rootInstanceId, CancellationToken cancellationToken = default)
     {

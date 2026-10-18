@@ -46,7 +46,8 @@ public sealed class DesktopAppProvenanceMonitor(
     PolicyStore policyStore,
     NetworkActivityCache networkActivityCache,
     FileProvenanceStore provenanceStore,
-    InteractiveUserContextProvider interactiveUserContextProvider,
+    IInteractiveUserContextProvider interactiveUserContextProvider,
+    IWatchedFolderPathResolver watchedFolderPathResolver,
     ILogger<DesktopAppProvenanceMonitor> logger) : BackgroundService
 {
     private const string SessionName = "CompanyDlp-DesktopAppProvenance";
@@ -182,11 +183,11 @@ public sealed class DesktopAppProvenanceMonitor(
     private void StartFileWatchers(IReadOnlyList<string> watchedFolders)
     {
         var context = interactiveUserContextProvider.GetActiveConsoleUser();
-        var interactiveProfilePath = WatchedFolderPathResolver.ResolveInteractiveUserProfilePath(context.UserSid, logger);
+        var interactiveProfilePath = watchedFolderPathResolver.ResolveInteractiveUserProfilePath(context.UserSid, logger);
 
         foreach (var folder in watchedFolders)
         {
-            var expanded = WatchedFolderPathResolver.ExpandWatchedFolderPath(folder, interactiveProfilePath);
+            var expanded = watchedFolderPathResolver.ExpandWatchedFolderPath(folder, interactiveProfilePath);
             if (!Directory.Exists(expanded)) continue;
 
             try

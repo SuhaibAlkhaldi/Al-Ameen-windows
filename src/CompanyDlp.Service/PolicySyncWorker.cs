@@ -5,7 +5,7 @@ namespace CompanyDlp.Service;
 public sealed class PolicySyncWorker(
     PolicyStore policyStore,
     AgentIdentityProvider identityProvider,
-    InteractiveUserContextProvider interactiveUserContextProvider,
+    IInteractiveUserContextProvider interactiveUserContextProvider,
     BackendApiClient backendApiClient,
     PolicySnapshotValidator validator,
     AuditLogger auditLogger,

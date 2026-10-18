@@ -4,18 +4,27 @@ using CompanyDlp.Contracts;
 
 namespace CompanyDlp.Service;
 
+// Contract extracted for the cross-platform plan (see file-tracking-feature-status memory) - a future
+// macOS/Linux build provides its own USB-policy implementation behind this same name.
+public interface IUsbProtectionMonitor
+{
+    IReadOnlyList<UsbDeviceBundleInfo> LastSnapshot { get; }
+    Task TickAsync(bool initial, CancellationToken cancellationToken);
+    void ResetBaseline();
+}
+
 public sealed class UsbProtectionMonitor(
     PolicyStore policyStore,
     RuntimeOverrideStore runtimeOverrides,
     AgentIdentityProvider identityProvider,
-    InteractiveUserContextProvider interactiveUserContextProvider,
+    IInteractiveUserContextProvider interactiveUserContextProvider,
     PermissionEvaluator permissionEvaluator,
-    UsbDeviceInventory inventory,
+    IUsbDeviceInventory inventory,
     UsbBaselineStore baselineStore,
-    UsbDeviceController controller,
+    IUsbDeviceController controller,
     AuditLogger auditLogger,
     NotificationStore notificationStore,
-    ILogger<UsbProtectionMonitor> logger)
+    ILogger<UsbProtectionMonitor> logger) : IUsbProtectionMonitor
 {
     private readonly HashSet<string> _known = new(StringComparer.OrdinalIgnoreCase);
 

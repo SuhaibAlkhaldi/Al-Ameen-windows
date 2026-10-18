@@ -6,7 +6,7 @@ namespace CompanyDlp.Service;
 
 public sealed class TrustedClock(
     PolicyStore policyStore,
-    MachineDataProtector dataProtector,
+    IMachineDataProtector dataProtector,
     ILogger<TrustedClock> logger) : ITrustedClock
 {
     private const string ProtectionPurpose = "CompanyDlp.TrustedClock.v1";

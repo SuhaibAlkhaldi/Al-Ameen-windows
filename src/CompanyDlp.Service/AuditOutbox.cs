@@ -7,10 +7,24 @@ namespace CompanyDlp.Service;
 
 public sealed record AuditOutboxItem(string Path, SecurityEventEnvelope Event);
 
+// Contract extracted for the cross-platform plan (see file-tracking-feature-status memory) - a future
+// macOS/Linux build provides its own disk-backed audit queue implementation (same on-disk JSON shape,
+// just a different encryption-at-rest mechanism than DPAPI via MachineDataProtector) behind this same
+// name.
+public interface IAuditOutbox
+{
+    Task EnqueueAsync(SecurityEventEnvelope securityEvent, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<AuditOutboxItem>> ReadBatchAsync(int maximumCount, CancellationToken cancellationToken);
+    void MarkDelivered(IEnumerable<AuditOutboxItem> items, ISet<Guid> deliveredEventIds);
+    void MarkPermanentlyRejected(AuditOutboxItem item, string reasonCode);
+    void RecordSyncError(string message);
+    AuditOutboxStatus GetStatus();
+}
+
 public sealed class AuditOutbox(
     PolicyStore policyStore,
-    MachineDataProtector protector,
-    ILogger<AuditOutbox> logger)
+    IMachineDataProtector protector,
+    ILogger<AuditOutbox> logger) : IAuditOutbox
 {
     private readonly SemaphoreSlim _gate = new(1, 1);
     private DateTimeOffset? _lastSuccessfulSyncAtUtc;

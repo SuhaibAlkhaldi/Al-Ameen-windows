@@ -53,13 +53,21 @@ namespace CompanyDlp.Service;
 // to EnforcementMode="Enabled" - confirmed live on real test devices - and nothing else on those
 // devices will ever turn it back off on its own. It runs on every apply cycle to find and reset that
 // automatically, with no manual intervention or reinstall required.
+// Contract extracted for the cross-platform plan (see file-tracking-feature-status memory) - a future
+// macOS/Linux build provides its own CLI-restriction implementation behind this same name.
+public interface ICliExecutionPolicyManager
+{
+    Task ApplyMachinePoliciesAsync(CancellationToken cancellationToken = default);
+    void RunSelfHealOnly();
+}
+
 public sealed class CliExecutionPolicyManager(
     PolicyStore policyStore,
     PermissionEvaluator permissionEvaluator,
     AgentIdentityProvider identityProvider,
-    InteractiveUserContextProvider interactiveUserContextProvider,
+    IInteractiveUserContextProvider interactiveUserContextProvider,
     AuditLogger auditLogger,
-    ILogger<CliExecutionPolicyManager> logger)
+    ILogger<CliExecutionPolicyManager> logger) : ICliExecutionPolicyManager
 {
     // Explorer DisallowRun/RestrictRun targets - all five restricted executables now, including wt.exe
     // (see class-level comment for why AppLocker is no longer used for any of them). RestrictRun's

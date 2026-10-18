@@ -38,8 +38,9 @@ public sealed class FileInventoryChangeWatcher(
     FileInventoryLocalStore localStore,
     FileInventoryContentResolver contentResolver,
     FileProvenanceStore provenanceStore,
-    InteractiveUserContextProvider interactiveUserContextProvider,
+    IInteractiveUserContextProvider interactiveUserContextProvider,
     SelfWrittenContentRegistry selfWrittenContentRegistry,
+    IWatchedFolderPathResolver watchedFolderPathResolver,
     ILogger<FileInventoryChangeWatcher> logger) : BackgroundService
 {
     private readonly ConcurrentQueue<FileSystemEventArgs> _pendingEvents = new();
@@ -139,11 +140,11 @@ public sealed class FileInventoryChangeWatcher(
     private void StartFileWatchers(IReadOnlyList<string> watchedFolders)
     {
         var context = interactiveUserContextProvider.GetActiveConsoleUser();
-        var interactiveProfilePath = WatchedFolderPathResolver.ResolveInteractiveUserProfilePath(context.UserSid, logger);
+        var interactiveProfilePath = watchedFolderPathResolver.ResolveInteractiveUserProfilePath(context.UserSid, logger);
 
         foreach (var folder in watchedFolders)
         {
-            var expanded = WatchedFolderPathResolver.ExpandWatchedFolderPath(folder, interactiveProfilePath);
+            var expanded = watchedFolderPathResolver.ExpandWatchedFolderPath(folder, interactiveProfilePath);
             if (!Directory.Exists(expanded)) continue;
 
             try

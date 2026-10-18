@@ -6,7 +6,7 @@ namespace CompanyDlp.Service;
 
 public sealed class PermissionLifecycleMonitor(
     PolicyStore policyStore,
-    MachineDataProtector dataProtector,
+    IMachineDataProtector dataProtector,
     TrustedClock trustedClock,
     AuditLogger auditLogger,
     ILogger<PermissionLifecycleMonitor> logger)

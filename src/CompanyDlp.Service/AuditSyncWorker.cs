@@ -5,7 +5,7 @@ namespace CompanyDlp.Service;
 public sealed class AuditSyncWorker(
     PolicyStore policyStore,
     AgentIdentityProvider identityProvider,
-    AuditOutbox outbox,
+    IAuditOutbox outbox,
     BackendApiClient backendApiClient,
     ILogger<AuditSyncWorker> logger) : BackgroundService
 {

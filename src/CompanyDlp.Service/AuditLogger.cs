@@ -6,7 +6,7 @@ namespace CompanyDlp.Service;
 public sealed class AuditLogger(
     PolicyStore policyStore,
     SecurityEventFactory eventFactory,
-    AuditOutbox outbox,
+    IAuditOutbox outbox,
     ILogger<AuditLogger> logger)
 {
     private readonly SemaphoreSlim _fileGate = new(1, 1);

@@ -6,7 +6,7 @@ namespace CompanyDlp.Service;
 public sealed class FileKeyProtector(
     PolicyStore policyStore,
     AgentIdentityProvider identityProvider,
-    MachineDataProtector machineDataProtector,
+    IMachineDataProtector machineDataProtector,
     BackendApiClient backendApiClient) : IFileKeyProtector
 {
     public async Task<WrappedFileKey> WrapAsync(Guid fileId, byte[] plainKey, CancellationToken cancellationToken)

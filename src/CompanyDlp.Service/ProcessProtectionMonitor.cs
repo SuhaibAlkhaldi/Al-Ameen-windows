@@ -5,13 +5,20 @@ using CompanyDlp.Contracts;
 
 namespace CompanyDlp.Service;
 
+// Contract extracted for the cross-platform plan (see file-tracking-feature-status memory) - a future
+// macOS/Linux build provides its own process-monitoring implementation behind this same name.
+public interface IProcessProtectionMonitor
+{
+    Task TickAsync(CancellationToken cancellationToken);
+}
+
 public sealed class ProcessProtectionMonitor(
     PolicyStore policyStore,
     AgentIdentityProvider identityProvider,
     PermissionEvaluator permissionEvaluator,
     AuditLogger auditLogger,
     NotificationStore notificationStore,
-    ILogger<ProcessProtectionMonitor> logger)
+    ILogger<ProcessProtectionMonitor> logger) : IProcessProtectionMonitor
 {
     private readonly HashSet<int> _reported = [];
 
