@@ -66,9 +66,17 @@ public sealed class BrowserPolicyManager(
                 // (same DeviceId-scoped matching UsbProtectionMonitor already uses) instead of blindly
                 // applying the static default.
                 var blockDownloads = ResolveBlockDownloads(policy);
-                extensionResults.Add(ApplyEdge(policy.Browser, blockDownloads));
-                extensionResults.Add(ApplyChrome(policy.Browser, blockDownloads));
-                extensionResults.Add(ApplyFirefox(policy.Browser));
+
+                // Resolved once per cycle, the same way blockDownloads is just above - never persisted
+                // into BrowserPolicy itself (PolicyStore.PreserveLocalOnlySections would silently
+                // discard a backend-delivered value there on every reload/sync; Permissions/Grants is
+                // the one section that actually survives that preservation step).
+                var approvedExtensionIds = ResolveApprovedExtensionIds(policy);
+                var extensionsUnrestricted = ResolveExtensionsUnrestricted(policy);
+
+                extensionResults.Add(ApplyEdge(policy.Browser, blockDownloads, approvedExtensionIds, extensionsUnrestricted));
+                extensionResults.Add(ApplyChrome(policy.Browser, blockDownloads, approvedExtensionIds, extensionsUnrestricted));
+                extensionResults.Add(ApplyFirefox(policy.Browser, approvedExtensionIds, extensionsUnrestricted));
             }
             ApplyWindowsScreenCapturePolicy(policy.Screen, ResolveDisableGameCapture(policy));
             // ActionKey is set explicitly here (as ActionKeys.PolicyApply, the existing internal/
@@ -120,6 +128,29 @@ public sealed class BrowserPolicyManager(
             interactiveUserContextProvider.GetActiveConsoleUser(), identityProvider.Get());
     }
 
+    // The dynamic, unbounded list of specific extension ids currently approved for this device's
+    // active employee/device/organization grants - see PermissionEvaluator.EvaluateAllowedKeysByPrefix.
+    // Empty whenever BlockUnapprovedExtensions is off - an allowlist is meaningless without the
+    // blanket block it exists to carve exceptions into.
+    private IReadOnlyList<string> ResolveApprovedExtensionIds(DlpPolicy policy)
+    {
+        if (!policy.Browser.BlockUnapprovedExtensions) return [];
+
+        var allowedKeys = permissionEvaluator.EvaluateAllowedKeysByPrefix(
+            policy, ActionKeys.ExtensionActionKeyPrefix,
+            interactiveUserContextProvider.GetActiveConsoleUser(), identityProvider.Get(), DateTimeOffset.UtcNow);
+
+        return allowedKeys.Select(key => key[ActionKeys.ExtensionActionKeyPrefix.Length..]).ToList();
+    }
+
+    // The fixed "install anything, bypass the allowlist entirely" grant - see ActionKeys.ExtensionUnrestricted.
+    private bool ResolveExtensionsUnrestricted(DlpPolicy policy)
+    {
+        if (!policy.Browser.BlockUnapprovedExtensions) return false;
+        return !ShouldBlockForMissingGrant(policy, permissionEvaluator, ActionKeys.ExtensionUnrestricted,
+            interactiveUserContextProvider.GetActiveConsoleUser(), identityProvider.Get());
+    }
+
     // Mirrors ResolveBlockDownloads: DisableWindowsGameCapture is part of the per-subject-grantable
     // ScreenRecording permission (see EffectivePolicyBuilder, which already relaxes this flag when the
     // grant allows it), but this machine-wide registry policy is the only Production-mode enforcement
@@ -147,7 +178,8 @@ public sealed class BrowserPolicyManager(
         SetOrDeleteDword(key, "AllowGameDVR", policy.Enabled && disableGameCapture, 0);
     }
 
-    private static ExtensionPolicyResult ApplyEdge(BrowserPolicy policy, bool blockDownloads)
+    private static ExtensionPolicyResult ApplyEdge(
+        BrowserPolicy policy, bool blockDownloads, IReadOnlyList<string> approvedExtensionIds, bool extensionsUnrestricted)
     {
         using var key = Registry.LocalMachine.CreateSubKey(EdgePath, true)
             ?? throw new InvalidOperationException("Could not open the Edge policy registry key.");
@@ -159,10 +191,11 @@ public sealed class BrowserPolicyManager(
         SetOrDeleteDword(key, "DownloadRestrictions", blockDownloads, 3);
 
         return ApplyExtensionPolicy(Registry.LocalMachine, EdgePath, policy.EdgeExtensionId, policy.EdgeExtensionUpdateUrl,
-            policy.BlockUnapprovedExtensions, ExtensionPlatform.Edge);
+            policy.BlockUnapprovedExtensions && !extensionsUnrestricted, approvedExtensionIds, ExtensionPlatform.Edge);
     }
 
-    private static ExtensionPolicyResult ApplyChrome(BrowserPolicy policy, bool blockDownloads)
+    private static ExtensionPolicyResult ApplyChrome(
+        BrowserPolicy policy, bool blockDownloads, IReadOnlyList<string> approvedExtensionIds, bool extensionsUnrestricted)
     {
         using var key = Registry.LocalMachine.CreateSubKey(ChromePath, true)
             ?? throw new InvalidOperationException("Could not open the Chrome policy registry key.");
@@ -172,7 +205,7 @@ public sealed class BrowserPolicyManager(
         SetOrDeleteDword(key, "DownloadRestrictions", blockDownloads, 3);
 
         return ApplyExtensionPolicy(Registry.LocalMachine, ChromePath, policy.ChromeExtensionId, policy.ChromeExtensionUpdateUrl,
-            policy.BlockUnapprovedExtensions, ExtensionPlatform.Chrome);
+            policy.BlockUnapprovedExtensions && !extensionsUnrestricted, approvedExtensionIds, ExtensionPlatform.Chrome);
     }
 
     // Firefox has no equivalent of Chrome/Edge's Incognito/GuestMode/Screenshot/DownloadRestrictions
@@ -180,13 +213,22 @@ public sealed class BrowserPolicyManager(
     // (different) enterprise policy names and are out of scope for this fix, which targets specifically
     // the "every extension blocked, including Ameen's own, with no working alternative" failure mode.
     // Firefox parity here is for extension force-install/block only.
-    private static ExtensionPolicyResult ApplyFirefox(BrowserPolicy policy)
+    private static ExtensionPolicyResult ApplyFirefox(BrowserPolicy policy, IReadOnlyList<string> approvedExtensionIds, bool extensionsUnrestricted)
     {
         var status = ExtensionPolicyValidator.Validate(policy.FirefoxExtensionId, policy.FirefoxExtensionUpdateUrl, ExtensionPlatform.Firefox);
-        var plan = BuildWritePlan(status, policy.BlockUnapprovedExtensions);
+        var plan = BuildWritePlan(status, policy.BlockUnapprovedExtensions && !extensionsUnrestricted);
 
         using var key = Registry.LocalMachine.CreateSubKey($@"{FirefoxPath}\ExtensionSettings", true)
             ?? throw new InvalidOperationException("Could not open the Firefox ExtensionSettings policy registry key.");
+
+        // One "allowed" entry per approved extension id, same per-extension value-name convention as
+        // the force-installed entry below (Mozilla's policy-templates ExtensionSettings schema) - lets
+        // the employee install/remove it freely, unlike the force-installed entry which Firefox never
+        // lets the user disable.
+        foreach (var approvedExtensionId in approvedExtensionIds)
+        {
+            key.SetValue(approvedExtensionId, """{"installation_mode":"allowed"}""", RegistryValueKind.String);
+        }
 
         // Firefox's ExtensionSettings registry mapping (documented by Mozilla's own policy-templates
         // project, mozilla/policy-templates) is one VALUE PER EXTENSION - the value NAME is the
@@ -223,7 +265,8 @@ public sealed class BrowserPolicyManager(
     }
 
     private static ExtensionPolicyResult ApplyExtensionPolicy(
-        RegistryKey hive, string browserPath, string extensionId, string updateUrl, bool blockOthers, ExtensionPlatform platform)
+        RegistryKey hive, string browserPath, string extensionId, string updateUrl, bool blockOthers,
+        IReadOnlyList<string> approvedExtensionIds, ExtensionPlatform platform)
     {
         var status = ExtensionPolicyValidator.Validate(extensionId, updateUrl, platform);
         var plan = BuildWritePlan(status, blockOthers);
@@ -239,6 +282,21 @@ public sealed class BrowserPolicyManager(
         {
             if (plan.WriteBlocklist) blockList?.SetValue(ExtensionPolicyValueName, "*", RegistryValueKind.String);
             else blockList?.DeleteValue(ExtensionPolicyValueName, false);
+        }
+
+        // Delete-then-recreate every cycle (rather than diffing old vs. new values) so a revoked
+        // approval's stale numbered entry can never survive past the next apply cycle - the Firefox
+        // per-value-name scheme above can't do this as cleanly (its value name IS the extension id,
+        // not a position), which is exactly why that path has its own documented orphaned-entry
+        // limitation instead.
+        hive.DeleteSubKeyTree($@"{browserPath}\ExtensionInstallAllowlist", throwOnMissingSubKey: false);
+        if (approvedExtensionIds.Count > 0)
+        {
+            using var allowList = hive.CreateSubKey($@"{browserPath}\ExtensionInstallAllowlist", true);
+            for (var index = 0; index < approvedExtensionIds.Count; index++)
+            {
+                allowList?.SetValue((index + 1).ToString(), approvedExtensionIds[index], RegistryValueKind.String);
+            }
         }
 
         return new ExtensionPolicyResult(platform, status, extensionId ?? "", updateUrl ?? "", plan.WriteBlocklist);

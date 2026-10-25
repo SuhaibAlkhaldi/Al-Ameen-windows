@@ -1,3 +1,7 @@
+Classification: PUBLIC
+Device: DESKTOP-VVGD6Q8
+Last Scanned: 2026-10-25 14:45
+
 [HISTORICAL - already applied, do not re-run]
 This hotfix's ordering fix (show the alert immediately, audit in the background) is already live in
 browser-extension/service-worker.js (Chrome/Edge, since evolved further to manifest 3.0.7) and, as of

@@ -94,6 +94,12 @@ public sealed class UsbDeviceBundleInfo
     public bool HasForbiddenFunction { get; set; }
     public bool IsTrustedBaseline { get; set; }
     public bool IsAllowed { get; set; }
+
+    // Windows' own CM_DRP_REMOVAL_POLICY signal (see UsbDeviceInventory.ResolveIsRemovable): false
+    // only on a confirmed "Expect no removal" read, meaning embedded/soldered-in hardware. Defaults
+    // true (removable) so a failed/ambiguous OS query falls back to today's existing strict
+    // behavior - this field only ever narrows what's eligible for auto-disable, never widens it.
+    public bool IsRemovable { get; set; } = true;
 }
 
 public sealed class TemporaryUsbBlockRequest

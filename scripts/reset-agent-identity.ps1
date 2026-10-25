@@ -61,8 +61,8 @@ Write-Host "Stopping the CompanyDlp service..." -ForegroundColor Cyan
 Stop-Service CompanyDlp -Force -ErrorAction SilentlyContinue
 
 $targets = @(
-    Join-Path $programDataRoot "Agent\identity.json",
-    Join-Path $programDataRoot "Policy\remote-policy.cache"
+    (Join-Path $programDataRoot "Agent\identity.json"),
+    (Join-Path $programDataRoot "Policy\remote-policy.cache")
 )
 
 foreach ($path in $targets) {

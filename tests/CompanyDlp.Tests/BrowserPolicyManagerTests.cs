@@ -97,6 +97,54 @@ public sealed class BrowserPolicyManagerTests
         Assert.True(shouldBlock);
     }
 
+    // Covers the browser-extension-approval feature's two decision points that live in
+    // BrowserPolicyManager itself: extension.unrestricted (read via the same ShouldBlockForMissingGrant
+    // helper the Screen/Browser-download checks above already use) and BuildWritePlan's unaffected
+    // Forcelist/Blocklist decision given that resolved value.
+
+    [Fact]
+    public void NoUnrestrictedGrant_ExtensionUnrestrictedIsBlocked()
+    {
+        var policy = CreatePolicy(ActionKeys.ExtensionUnrestricted, defaultAllowed: false);
+        var shouldBlock = BrowserPolicyManager.ShouldBlockForMissingGrant(
+            policy, _evaluator, ActionKeys.ExtensionUnrestricted, _context, _identity);
+        Assert.True(shouldBlock);
+    }
+
+    [Fact]
+    public void ActiveUnrestrictedGrant_ExtensionUnrestrictedIsAllowed()
+    {
+        var policy = CreatePolicy(ActionKeys.ExtensionUnrestricted, defaultAllowed: false);
+        policy.Permissions.Grants.Add(new PermissionGrant
+        {
+            ActionKey = ActionKeys.ExtensionUnrestricted,
+            Allowed = true,
+            SubjectType = PermissionSubjectTypes.DeviceId,
+            SubjectId = _identity.DeviceId.ToString(),
+            Source = PermissionSources.PermanentPolicy,
+            StartsAtUtc = DateTimeOffset.UtcNow.AddMinutes(-1),
+            Priority = 500
+        });
+
+        var shouldBlock = BrowserPolicyManager.ShouldBlockForMissingGrant(
+            policy, _evaluator, ActionKeys.ExtensionUnrestricted, _context, _identity);
+        Assert.False(shouldBlock);
+    }
+
+    [Theory]
+    [InlineData(ExtensionForceInstallStatus.Valid, true, false, true)]   // valid id + block requested + NOT unrestricted -> still blocks others
+    [InlineData(ExtensionForceInstallStatus.Valid, true, true, false)]  // valid id + block requested BUT unrestricted overrides it -> does not block others
+    [InlineData(ExtensionForceInstallStatus.Valid, false, false, false)] // block not requested at all -> never blocks others
+    [InlineData(ExtensionForceInstallStatus.Invalid, true, false, false)] // misconfigured id -> never force-installs or blocks, regardless of the flag
+    public void BuildWritePlan_BlockOthersReflectsUnrestrictedOverride(
+        ExtensionForceInstallStatus status, bool blockUnapprovedExtensions, bool extensionsUnrestricted, bool expectedWriteBlocklist)
+    {
+        var effectiveBlockOthers = blockUnapprovedExtensions && !extensionsUnrestricted;
+        var plan = BrowserPolicyManager.BuildWritePlan(status, effectiveBlockOthers);
+
+        Assert.Equal(expectedWriteBlocklist, plan.WriteBlocklist);
+    }
+
     private static DlpPolicy CreatePolicy(string actionKey, bool defaultAllowed) => new()
     {
         Permissions = new PermissionPolicy

@@ -42,7 +42,16 @@ param(
     [string]$FirefoxExtensionUpdateUrl = "",
     [string]$RootCertPath,
     [string]$TimestampServer = "http://timestamp.digicert.com",
-    [string]$OutputDirectory = "artifacts\portable-package"
+    [string]$OutputDirectory = "artifacts\portable-package",
+    # Optional: bake ONE enrollment code into portable-config.json so deploy-agent-portable.ps1 (and
+    # thus Install-CompanyDlp.bat, which launches it with zero arguments) enrolls each target device
+    # with no popup - true zero-touch rollout. Omit for the existing ad-hoc/manual-popup workflow
+    # (single-device builds, testing, etc) - unaffected, the field is written as an empty string.
+    # SECURITY: the code is stored in PLAINTEXT inside portable-config.json, which ships inside the
+    # distributed package - mitigate operationally, not in code: scope the code's Max Uses tightly to
+    # real headcount, give it a short expiry matching the actual rollout window, and Revoke it via the
+    # admin portal immediately once rollout is done.
+    [string]$EnrollmentCode = ""
 )
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
@@ -158,6 +167,7 @@ $config = [ordered]@{
     edgeExtensionUpdateUrl      = $EdgeExtensionUpdateUrl
     firefoxExtensionId          = $FirefoxExtensionId
     firefoxExtensionUpdateUrl   = $FirefoxExtensionUpdateUrl
+    enrollmentCode              = $EnrollmentCode
     buildCommit                = $buildCommit
     buildTimestampUtc          = $buildTimestampUtc
 }

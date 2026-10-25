@@ -1,3 +1,7 @@
+Classification: VERY SECRET
+Device: DESKTOP-VVGD6Q8
+Last Scanned: 2026-10-25 14:45
+
 Company DLP Permanent User Permissions Toolkit
 ================================================
 

@@ -5,6 +5,30 @@ Get-Process -Name @("CompanyDlp.Desktop", "CompanyDlp.NativeHost") -ErrorAction 
 Stop-Service CompanyDlp -Force -ErrorAction SilentlyContinue
 sc.exe delete CompanyDlp | Out-Null
 Start-Sleep -Seconds 1
+
+# Tell the backend this device is being decommissioned (sets it "Retired" and revokes its credential -
+# see AgentEnrollmentService.Unenroll) so a later reinstall under the SAME DeviceId (identity.json under
+# ProgramData is deliberately left alone below, see the comment at the end of this script) is treated as
+# a legitimate reactivation instead of "device already enrolled". Best-effort and non-blocking: the
+# service is already stopped above but its files are still in place, and uninstall must always complete
+# locally even if the backend is unreachable (e.g. this machine is offline) - a later --enroll attempt
+# against a device that never got marked Retired just hits the original rejection, which an admin can
+# resolve manually from the device's existing Retired/decommission action in the admin portal.
+$serviceExe = Join-Path $installDir "Service\CompanyDlp.Service.exe"
+if (Test-Path $serviceExe) {
+    Write-Host "Notifying the backend this device is being uninstalled..." -ForegroundColor Cyan
+    try {
+        & $serviceExe --unenroll
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "Could not unenroll from the backend (exit code $LASTEXITCODE) - continuing uninstall regardless." -ForegroundColor Yellow
+        }
+    } catch {
+        Write-Host "Could not unenroll from the backend ($($_.Exception.Message)) - continuing uninstall regardless." -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "Service executable not found at $serviceExe - skipping backend unenroll notification." -ForegroundColor Yellow
+}
+
 & (Join-Path $PSScriptRoot "unregister-production-context-menu.ps1")
 
 $shellExtensionRegisterExe = Join-Path $installDir "ShellExtension\CompanyDlp.ShellExtension.Register.exe"

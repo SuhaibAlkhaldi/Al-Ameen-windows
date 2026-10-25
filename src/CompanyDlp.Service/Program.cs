@@ -4,9 +4,11 @@ using CompanyDlp.Core;
 using CompanyDlp.Service;
 
 var enrollmentMode = args.Any(value => value.Equals("--enroll", StringComparison.OrdinalIgnoreCase));
+var unenrollMode = args.Any(value => value.Equals("--unenroll", StringComparison.OrdinalIgnoreCase));
 var versionMode = args.Any(value => value.Equals("--version", StringComparison.OrdinalIgnoreCase));
 var hostArguments = args.Where(value =>
     !value.Equals("--enroll", StringComparison.OrdinalIgnoreCase) &&
+    !value.Equals("--unenroll", StringComparison.OrdinalIgnoreCase) &&
     !value.Equals("--version", StringComparison.OrdinalIgnoreCase)).ToArray();
 var builder = Host.CreateApplicationBuilder(hostArguments);
 
@@ -110,6 +112,7 @@ builder.Services.AddSingleton<NotificationStore>();
 builder.Services.AddSingleton<ExtensionHealthChecker>();
 builder.Services.AddSingleton<BrowserPolicyManager>();
 builder.Services.AddSingleton<RuntimeOverrideStore>();
+builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<UsbDeviceInventory>();
 builder.Services.AddSingleton<UsbBaselineStore>();
 builder.Services.AddSingleton<UsbDeviceController>();
@@ -155,7 +158,7 @@ if (versionMode)
     return;
 }
 
-ValidateProductionReadiness(policy, enrollmentMode, host.Services.GetRequiredService<AgentCredentialStore>());
+ValidateProductionReadiness(policy, enrollmentMode, unenrollMode, host.Services.GetRequiredService<AgentCredentialStore>());
 DocumentTextExtractor.ConfigureImageOcr(host.Services.GetRequiredService<ImageOcrExtractor>());
 
 if (enrollmentMode)
@@ -198,7 +201,37 @@ if (enrollmentMode)
     }
     catch (Exception ex)
     {
-        Console.Error.WriteLine("Al-Ameen enrollment failed: " + ExtractEnrollmentFailureReason(ex));
+        Console.Error.WriteLine("Al-Ameen enrollment failed: " + ExtractBackendFailureReason(ex));
+        Environment.Exit(2);
+        return;
+    }
+}
+
+if (unenrollMode)
+{
+    var credentialStore = host.Services.GetRequiredService<AgentCredentialStore>();
+    var credentialName = policy.Backend.CredentialName;
+
+    // Already unenrolled (e.g. uninstall's --unenroll was already run once) - a no-op success rather
+    // than an error, and critically must be checked BEFORE calling BackendApiClient.UnenrollAsync:
+    // without a stored credential, BackendRequestAuthenticator.Apply throws a local "token required"
+    // error that has nothing to do with the backend/network reachability uninstall's caller is
+    // prepared to tolerate.
+    if (string.IsNullOrWhiteSpace(credentialStore.Load(credentialName)))
+    {
+        Console.WriteLine("Al-Ameen device is not currently enrolled - nothing to unenroll.");
+        return;
+    }
+
+    try
+    {
+        await host.Services.GetRequiredService<BackendApiClient>().UnenrollAsync(CancellationToken.None);
+        Console.WriteLine("Al-Ameen device unenrolled.");
+        return;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine("Al-Ameen unenrollment failed: " + ExtractBackendFailureReason(ex));
         Environment.Exit(2);
         return;
     }
@@ -209,11 +242,13 @@ await host.RunAsync();
 static void ValidateProductionReadiness(
     DlpPolicy policy,
     bool enrollmentMode,
+    bool unenrollMode,
     AgentCredentialStore credentialStore)
 {
     var failures = ProductionReadinessValidator.Validate(policy).ToList();
     if (policy.Runtime.Mode.Equals("Production", StringComparison.OrdinalIgnoreCase)
         && !enrollmentMode
+        && !unenrollMode
         && policy.Backend.Enabled
         && policy.Backend.AuthenticationMode.Equals(BackendAuthenticationModes.DeviceBearerToken, StringComparison.OrdinalIgnoreCase)
         && string.IsNullOrWhiteSpace(credentialStore.Load(policy.Backend.CredentialName)))
@@ -229,14 +264,14 @@ static void ValidateProductionReadiness(
     throw new InvalidOperationException(message);
 }
 
-// BackendApiClient.EnrollAsync formats failures as
+// BackendApiClient.EnrollAsync/UnenrollAsync format failures as
 // "Agent enrollment failed with 400 (Bad Request). Response: {"success":false,"messageEn":"...",...}"
 // - the JSON after "Response: " is the backend's raw ApiResponse body. Pull just messageEn back out
 // so the operator sees one clean sentence ("Invalid or expired enrollment code." /
 // "Enrollment code usage limit has been reached.") instead of the whole wrapped exception text. Any
 // exception shape this doesn't recognize (network failure, timeout, malformed body from a proxy)
 // falls back to ex.Message as-is rather than hiding it.
-static string ExtractEnrollmentFailureReason(Exception ex)
+static string ExtractBackendFailureReason(Exception ex)
 {
     const string marker = "Response: ";
     var index = ex.Message.IndexOf(marker, StringComparison.Ordinal);

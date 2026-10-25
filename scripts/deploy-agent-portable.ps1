@@ -464,9 +464,16 @@ $env:COMPANY_DLP_POLICY_PATH = $policyJsonPath
 $env:COMPANY_DLP_SESSION_AGENT_EXE = $desktopExe
 
 Write-Host ""
+# Same "missing property" pattern as firefoxExtensionId above - a portable-config.json built before
+# this field existed, or built without -EnrollmentCode, must not throw here.
+$configEnrollmentCode = if ($config.PSObject.Properties.Name -contains "enrollmentCode") { $config.enrollmentCode } else { "" }
+
 if (-not [string]::IsNullOrWhiteSpace($EnrollmentCode)) {
     Write-Host "Using enrollment code supplied via -EnrollmentCode." -ForegroundColor Green
     $enrollmentCode = $EnrollmentCode
+} elseif (-not [string]::IsNullOrWhiteSpace($configEnrollmentCode)) {
+    Write-Host "Using enrollment code baked into portable-config.json at build time - zero-touch install." -ForegroundColor Green
+    $enrollmentCode = $configEnrollmentCode
 } else {
     Write-Host "Files installed. This device now needs a one-time enrollment code (create one per device," -ForegroundColor Cyan
     Write-Host "or reuse a multi-use batch code, from the admin portal / POST /api/v1/device-enrollment-tokens)." -ForegroundColor Cyan

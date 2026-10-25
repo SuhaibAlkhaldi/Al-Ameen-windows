@@ -162,6 +162,30 @@ public sealed class PermissionEvaluator(FileClassificationCache? classificationC
         };
     }
 
+    // Enumerates which of a dynamic, unbounded set of action keys sharing a prefix (today: browser
+    // extension ids, "extension.<id>") currently resolve Allowed - unlike every other action, there is
+    // no fixed, known-in-advance key to call Evaluate() with directly. Reuses Evaluate() per candidate
+    // key so every existing precedence rule (emergency deny, subject specificity, time windows) is
+    // inherited with zero duplicated logic. ActionKeys.ExtensionUnrestricted deliberately shares this
+    // same prefix but is a different, fixed concept (a blanket bypass, not an approved extension id)
+    // and must never be returned as if it were one.
+    public IReadOnlyList<string> EvaluateAllowedKeysByPrefix(
+        DlpPolicy policy, string actionKeyPrefix, ClientContext context, AgentIdentity identity, DateTimeOffset nowUtc)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        ArgumentException.ThrowIfNullOrWhiteSpace(actionKeyPrefix);
+
+        var candidateKeys = policy.Permissions.Grants
+            .Select(grant => grant.ActionKey)
+            .Where(key => key.StartsWith(actionKeyPrefix, StringComparison.OrdinalIgnoreCase)
+                && !key.Equals(ActionKeys.ExtensionUnrestricted, StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+
+        return candidateKeys
+            .Where(key => Evaluate(policy, key, context, identity, nowUtc).IsAllowed)
+            .ToList();
+    }
+
     private static bool IsActive(PermissionGrant grant, DateTimeOffset nowUtc)
     {
         if (grant.RevokedAtUtc is not null) return false;

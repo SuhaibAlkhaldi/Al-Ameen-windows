@@ -37,13 +37,20 @@
       color: #344054;
     }
 
-    select {
+    select, input[type="text"] {
       width: 100%;
       padding: 8px;
       border-radius: 8px;
       border: 1px solid #d0d5dd;
       font-size: 13px;
       box-sizing: border-box;
+    }
+
+    p.hint {
+      margin: 4px 0 0;
+      font-size: 11px;
+      color: #667085;
+      line-height: 1.4;
     }
 
     button {
@@ -74,24 +81,42 @@
 </head>
 <body>
   <main>
-    <h1>Request File Upload Access</h1>
+    <h1>Request Access</h1>
     <p class="subtitle">
-      Request permission for files at or below a classification tier before you try to upload or
-      drag-and-drop them. Public files never need a request.
+      Submit a request for IT to review. The actual request is filed on the portal using your own
+      sign-in - this popup only carries you there with the right details filled in.
     </p>
 
-    <label for="actionKey">Action</label>
-    <select id="actionKey">
-      <option value="browser.upload">Upload (file picker / form)</option>
-      <option value="browser.drag-drop">Drag and drop</option>
+    <label for="requestType">Request type</label>
+    <select id="requestType">
+      <option value="file">File upload access</option>
+      <option value="extension">Browser extension</option>
     </select>
 
-    <label for="tier">Classification Tier</label>
-    <select id="tier">
-      <option value="Internal">Internal</option>
-      <option value="Secret">Secret</option>
-      <option value="Very_Secret">Very Secret</option>
-    </select>
+    <div id="fileFields">
+      <label for="actionKey">Action</label>
+      <select id="actionKey">
+        <option value="browser.upload">Upload (file picker / form)</option>
+        <option value="browser.drag-drop">Drag and drop</option>
+      </select>
+
+      <label for="tier">Classification Tier</label>
+      <select id="tier">
+        <option value="Internal">Internal</option>
+        <option value="Secret">Secret</option>
+        <option value="Very_Secret">Very Secret</option>
+      </select>
+      <p class="hint">Public files never need a request.</p>
+    </div>
+
+    <div id="extensionFields" style="display: none;">
+      <label for="extensionId">Extension ID</label>
+      <input type="text" id="extensionId" maxlength="32" placeholder="e.g. mldapndkkodjmkamfmhpbcfdbamefeff">
+      <p class="hint">
+        Find this on the extension's Chrome/Edge Web Store page URL, or in
+        chrome://extensions with Developer mode on. Exactly 32 letters (a-p).
+      </p>
+    </div>
 
     <button id="continueButton">Continue to Portal</button>
     <div id="unavailable">

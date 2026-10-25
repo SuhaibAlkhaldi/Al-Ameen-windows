@@ -38,9 +38,13 @@ public sealed class UsbProtectionMonitor(
         if (!policy.Enabled || !policy.Usb.Enabled || !OperatingSystem.IsWindows()) return;
 
         var bundles = inventory.GetPresentBundles();
-        var baseline = policy.Usb.TrustDevicesPresentAtFirstRun
-            ? baselineStore.GetOrCreate(bundles)
-            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        IReadOnlyList<UsbBaselineEntry> baselineEntries = [];
+        var baselineIsSettling = false;
+        if (policy.Usb.TrustDevicesPresentAtFirstRun)
+        {
+            baselineEntries = baselineStore.GetOrCreate(bundles);
+            baselineIsSettling = baselineStore.IsSettling;
+        }
         var activeContext = interactiveUserContextProvider.GetActiveConsoleUser();
         var identity = identityProvider.Get();
 
@@ -53,7 +57,7 @@ public sealed class UsbProtectionMonitor(
 
         foreach (var bundle in bundles)
         {
-            bundle.IsTrustedBaseline = baseline.Contains(bundle.RootInstanceId);
+            bundle.IsTrustedBaseline = UsbBaselineStore.IsTrusted(baselineEntries, bundle);
             var explicitlyApproved = IsExplicitlyApproved(policy.Usb, bundle);
             var safeHid = IsSafeHid(policy.Usb, bundle);
             var userDecision = permissionEvaluator.Evaluate(
@@ -168,6 +172,35 @@ public sealed class UsbProtectionMonitor(
                 continue;
             }
 
+            if (ShouldWithholdDisable(bundle.IsRemovable, baselineIsSettling))
+            {
+                var reasonCode = ResolveWithheldReason(bundle.IsRemovable, baselineIsSettling);
+                await auditLogger.WriteAsync(new AuditEvent
+                {
+                    ActionKey = gatingActionKey,
+                    EventType = "UsbDeviceDisableWithheld",
+                    Action = "disable-withheld",
+                    Method = "SafetyNet",
+                    Result = "withheld",
+                    ReasonCode = reasonCode,
+                    DeviceInstanceId = bundle.RootInstanceId,
+                    ResourceName = bundle.DisplayName,
+                    Details = details
+                }, context, cancellationToken);
+
+                logger.LogWarning(
+                    "Withholding disable of {Device} ({ReasonCode}): {Explanation}. Manual IT review required.",
+                    bundle.DisplayName, reasonCode, DescribeWithheldReason(reasonCode));
+
+                notificationStore.Add(
+                    "usb",
+                    $"Review needed: {bundle.DisplayName} was not disabled",
+                    $"Company DLP determined {bundle.DisplayName} is not an approved {deviceTypeLabel.ToLowerInvariant()}, but withheld disabling it because {DescribeWithheldReason(reasonCode)}. No action was taken on the device - please review manually.",
+                    "Warning",
+                    "disable-withheld");
+                continue;
+            }
+
             var disabled = await controller.DisableAsync(bundle.RootInstanceId, cancellationToken);
             await auditLogger.WriteAsync(new AuditEvent
             {
@@ -248,6 +281,26 @@ public sealed class UsbProtectionMonitor(
 
     internal static bool ResolveIsAllowed(bool safeHid, bool explicitlyApproved, bool isTrustedBaseline, bool grantAllowed) =>
         safeHid || explicitlyApproved || isTrustedBaseline || grantAllowed;
+
+    // Whether the auto-disable side effect must be withheld even though the device is not allowed and
+    // Block mode is active. Distinct from, and layered on top of, ResolveIsAllowed: a withheld device
+    // is still audited/notified as "not approved" (the UsbDeviceBlocked write above this check) - only
+    // the physical disable call itself is suppressed, pending manual IT review or the baseline settle
+    // window closing.
+    internal static bool ShouldWithholdDisable(bool isRemovable, bool baselineIsSettling) =>
+        !isRemovable || baselineIsSettling;
+
+    internal static string ResolveWithheldReason(bool isRemovable, bool baselineIsSettling) =>
+        !isRemovable ? "NonRemovableDeviceProtected" : "UsbBaselineSettling";
+
+    internal static string DescribeWithheldReason(string reasonCode) => reasonCode switch
+    {
+        "NonRemovableDeviceProtected" =>
+            "this hardware reports itself as non-removable (embedded/integrated) and may be essential system hardware, such as a built-in webcam, Bluetooth radio, smart-card reader used for login, or network adapter",
+        "UsbBaselineSettling" =>
+            "the USB trust baseline is still being captured during this machine's first startup window",
+        _ => "of an internal safety check"
+    };
 
     internal static string ResolveAllowMethod(UsbPolicy policy, UsbDeviceBundleInfo bundle, PermissionDecision decision)
     {

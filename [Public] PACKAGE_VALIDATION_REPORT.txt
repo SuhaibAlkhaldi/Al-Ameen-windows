@@ -1,3 +1,7 @@
+Classification: PUBLIC
+Device: DESKTOP-VVGD6Q8
+Last Scanned: 2026-10-25 14:44
+
 Company DLP v1.1.0 Central Admin - Package Validation Report
 Generated UTC: 2026-07-05T07:53:40Z
 

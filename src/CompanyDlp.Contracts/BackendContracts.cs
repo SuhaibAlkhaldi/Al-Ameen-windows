@@ -225,3 +225,15 @@ public sealed class AgentEnrollmentResponse
     public string AccessToken { get; set; } = "";
     public DateTimeOffset ExpiresAtUtc { get; set; }
 }
+
+// Empty - device identity comes from the bearer token's own claims server-side (see
+// AgentUnenrollController), never from client-supplied fields. Exists only to satisfy
+// BackendApiClient.SendJsonAsync<TRequest,TResponse>'s generic signature.
+public sealed class AgentUnenrollRequest
+{
+}
+
+public sealed class AgentUnenrollResponse
+{
+    public bool Unenrolled { get; set; }
+}

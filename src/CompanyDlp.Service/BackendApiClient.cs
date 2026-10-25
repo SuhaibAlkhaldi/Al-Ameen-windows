@@ -164,6 +164,22 @@ public sealed class BackendApiClient(
         return result;
     }
 
+    public async Task<AgentUnenrollResponse> UnenrollAsync(CancellationToken cancellationToken)
+    {
+        var backend = policyStore.Get().Backend;
+        var result = await SendJsonAsync<AgentUnenrollRequest, AgentUnenrollResponse>(
+            HttpMethod.Post,
+            "api/v1/agent/unenroll",
+            new AgentUnenrollRequest(),
+            cancellationToken);
+
+        // Only reached once the backend has confirmed the device is retired - SendJsonAsync throws on
+        // any non-success response, so a failed/offline call never deletes the local credential,
+        // leaving a later retry (once connectivity returns) still able to authenticate and try again.
+        credentialStore.Delete(backend.CredentialName);
+        return result;
+    }
+
     private async Task<TResponse> SendJsonAsync<TRequest, TResponse>(
         HttpMethod method,
         string path,

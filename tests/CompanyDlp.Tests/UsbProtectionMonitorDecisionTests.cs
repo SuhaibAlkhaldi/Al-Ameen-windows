@@ -23,7 +23,8 @@ public sealed class UsbProtectionMonitorDecisionTests
         string productId = "5678",
         string serialNumber = "",
         bool hasKeyboardOrMouse = false,
-        bool hasForbiddenFunction = false) => new()
+        bool hasForbiddenFunction = false,
+        bool isRemovable = true) => new()
     {
         RootInstanceId = rootInstanceId,
         Classes = classes ?? [],
@@ -32,7 +33,8 @@ public sealed class UsbProtectionMonitorDecisionTests
         ProductId = productId,
         SerialNumber = serialNumber,
         HasKeyboardOrMouse = hasKeyboardOrMouse,
-        HasForbiddenFunction = hasForbiddenFunction
+        HasForbiddenFunction = hasForbiddenFunction,
+        IsRemovable = isRemovable
     };
 
     // --- ResolveGatingActionKey ---
@@ -173,6 +175,51 @@ public sealed class UsbProtectionMonitorDecisionTests
         bool safeHid, bool explicitlyApproved, bool isTrustedBaseline, bool grantAllowed, bool expected)
     {
         Assert.Equal(expected, UsbProtectionMonitor.ResolveIsAllowed(safeHid, explicitlyApproved, isTrustedBaseline, grantAllowed));
+    }
+
+    // --- ShouldWithholdDisable / ResolveWithheldReason ---
+
+    [Fact]
+    public void ShouldWithholdDisable_NonRemovable_ReturnsTrue()
+    {
+        Assert.True(UsbProtectionMonitor.ShouldWithholdDisable(isRemovable: false, baselineIsSettling: false));
+    }
+
+    [Fact]
+    public void ShouldWithholdDisable_BaselineSettling_ReturnsTrue()
+    {
+        Assert.True(UsbProtectionMonitor.ShouldWithholdDisable(isRemovable: true, baselineIsSettling: true));
+    }
+
+    [Fact]
+    public void ShouldWithholdDisable_RemovableAndSettled_ReturnsFalse()
+    {
+        Assert.False(UsbProtectionMonitor.ShouldWithholdDisable(isRemovable: true, baselineIsSettling: false));
+    }
+
+    [Fact]
+    public void ResolveWithheldReason_NonRemovableTakesPriorityOverSettling()
+    {
+        Assert.Equal(
+            "NonRemovableDeviceProtected",
+            UsbProtectionMonitor.ResolveWithheldReason(isRemovable: false, baselineIsSettling: true));
+    }
+
+    [Fact]
+    public void ResolveWithheldReason_SettlingOnly_ReturnsBaselineSettling()
+    {
+        Assert.Equal(
+            "UsbBaselineSettling",
+            UsbProtectionMonitor.ResolveWithheldReason(isRemovable: true, baselineIsSettling: true));
+    }
+
+    // Guards the "withheld disable is not the same as allowed" invariant: IsRemovable must never
+    // factor into the overall allow decision, only into whether a disable is physically carried out.
+    [Fact]
+    public void ResolveIsAllowed_IsUnaffectedByIsRemovable()
+    {
+        Assert.False(UsbProtectionMonitor.ResolveIsAllowed(
+            safeHid: false, explicitlyApproved: false, isTrustedBaseline: false, grantAllowed: false));
     }
 
     // --- Matches ---

@@ -64,6 +64,18 @@ public static class ActionKeys
     // audit-event action key PolicySyncWorker tags its own "applied a new policy" events with.
     public const string PolicyApply = "policy.apply";
 
+    // Fixed bypass action (mirrors DLPManagementSystem.Common.PermissionActionKeys.ExtensionUnrestricted)
+    // - an effective Allow means BrowserPolicyManager skips ExtensionInstallBlocklist="*" for that
+    // subject entirely. Distinct from the dynamic "extension.<id>" keys below (which are NOT in All -
+    // they're an arbitrary, unbounded set, never a fixed catalog entry).
+    public const string ExtensionUnrestricted = "extension.unrestricted";
+
+    // Prefix shared by every dynamic "approve this specific extension ID" action key. Note
+    // ExtensionUnrestricted above also starts with this same prefix despite being a different, fixed
+    // concept - PermissionEvaluator.EvaluateAllowedKeysByPrefix must explicitly exclude it when
+    // enumerating approved extension IDs.
+    public const string ExtensionActionKeyPrefix = "extension.";
+
     // IReadOnlySet<string> isn't available on netstandard2.0 (this project multi-targets net8.0 and
     // netstandard2.0 so CompanyDlp.ShellExtension, a .NET Framework 4.8 project, can reference it
     // directly) - HashSet<string> already exposes Contains/enumeration to every existing caller here.
@@ -90,6 +102,7 @@ public static class ActionKeys
         FileWatermarkDisable,
         FileOpenAccess,
         CliExecute,
-        CliSensitiveCommand
+        CliSensitiveCommand,
+        ExtensionUnrestricted
     };
 }
