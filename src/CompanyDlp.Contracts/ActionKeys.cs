@@ -44,6 +44,15 @@ public static class ActionKeys
     // value needed, same convention every other action-level grant already uses.
     public const string FileOpenAccess = "file.open-access";
 
+    // Mirrors DLPManagementSystem.Common.PermissionActionKeys.FileFilenameTagging on the backend
+    // side. An effective Allow means FileInventoryScanner.ApplyFilenameTag renames a classified
+    // file to add its tier prefix (e.g. "[Secret] report.pdf") - see FilenameClassificationTagger.
+    // Replaces the old local-only FileClassificationPolicy.FilenameTaggingEnabled flag, which
+    // PolicyStore.PreserveLocalOnlySections discarded from every backend sync (FileClassification
+    // is one of the locally-preserved sections); that field is left in the contract untouched (see
+    // FileClassificationContracts.cs) but is no longer read for this decision.
+    public const string FilenameTagging = "file.filename-tagging";
+
     // CliExecute: presence/allow-deny channel - can this user launch cmd.exe/powershell.exe/
     // powershell_ise.exe/pwsh.exe/wt.exe at all. Enforced entirely by a per-user Explorer
     // DisallowRun/RestrictRun policy (CliExecutionPolicyManager) - AppLocker is deliberately not used
@@ -101,6 +110,7 @@ public static class ActionKeys
         WatermarkDisable,
         FileWatermarkDisable,
         FileOpenAccess,
+        FilenameTagging,
         CliExecute,
         CliSensitiveCommand,
         ExtensionUnrestricted

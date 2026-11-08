@@ -44,6 +44,14 @@ public sealed class BrowserPolicyManager(
     // AddSingleton (Program.cs) - one instance for the process lifetime, one worker loop calling it.
     private readonly HashSet<string> _activeExtensionAlerts = new(StringComparer.OrdinalIgnoreCase);
 
+    // Dedup for the "success" apply audit event itself, same reasoning as _activeExtensionAlerts
+    // above: this method runs every ~PolicyReapplySeconds cycle regardless of whether anything
+    // actually changed, so logging unconditionally floods the audit view with identical rows (the
+    // registry writes below still run every cycle either way - only this audit write is
+    // conditional). Null on a failed cycle so the next successful one always logs once, confirming
+    // recovery rather than staying quiet just because the pre-failure fingerprint happens to match.
+    private string? _lastAppliedStateFingerprint;
+
     public async Task ApplyMachinePoliciesAsync(CancellationToken cancellationToken = default)
     {
         var policy = policyStore.Get();
@@ -55,6 +63,7 @@ public sealed class BrowserPolicyManager(
         }
 
         List<ExtensionPolicyResult> extensionResults = [];
+        var disableGameCapture = ResolveDisableGameCapture(policy);
 
         try
         {
@@ -78,7 +87,12 @@ public sealed class BrowserPolicyManager(
                 extensionResults.Add(ApplyChrome(policy.Browser, blockDownloads, approvedExtensionIds, extensionsUnrestricted));
                 extensionResults.Add(ApplyFirefox(policy.Browser, approvedExtensionIds, extensionsUnrestricted));
             }
-            ApplyWindowsScreenCapturePolicy(policy.Screen, ResolveDisableGameCapture(policy));
+            ApplyWindowsScreenCapturePolicy(policy.Screen, disableGameCapture);
+
+            var details = policy.Browser.Enabled
+                ? $"Browser and Windows screen-capture machine policies were applied. Extensions: {DescribeExtensionResults(extensionResults)}."
+                : "Browser and Windows screen-capture machine policies were applied.";
+
             // ActionKey is set explicitly here (as ActionKeys.PolicyApply, the existing internal/
             // audit-only channel) - without it, SecurityEventFactory.ResolveActionKey falls back to its
             // EventType-substring heuristic, and because EventType="browser-policy" contains "browser",
@@ -89,20 +103,24 @@ public sealed class BrowserPolicyManager(
             // browser.upload activity and making that audit view untrustworthy. policy.apply is already
             // a seeded, valid ActionKey (used by the real remote-policy-apply events), so this requires
             // no backend/DB change.
-            await auditLogger.WriteAsync(new AuditEvent
+            var fingerprint = $"{policy.Browser.Enabled}|{disableGameCapture}|{details}";
+            if (!string.Equals(fingerprint, _lastAppliedStateFingerprint, StringComparison.Ordinal))
             {
-                ActionKey = ActionKeys.PolicyApply,
-                EventType = "browser-policy",
-                Action = "apply-machine-policy",
-                Result = "success",
-                Details = policy.Browser.Enabled
-                    ? $"Browser and Windows screen-capture machine policies were applied. Extensions: {DescribeExtensionResults(extensionResults)}."
-                    : "Browser and Windows screen-capture machine policies were applied."
-            }, cancellationToken);
+                _lastAppliedStateFingerprint = fingerprint;
+                await auditLogger.WriteAsync(new AuditEvent
+                {
+                    ActionKey = ActionKeys.PolicyApply,
+                    EventType = "browser-policy",
+                    Action = "apply-machine-policy",
+                    Result = "success",
+                    Details = details
+                }, cancellationToken);
+            }
         }
         catch (Exception exception)
         {
             logger.LogError(exception, "Unable to apply browser policies.");
+            _lastAppliedStateFingerprint = null;
             await auditLogger.WriteAsync(new AuditEvent
             {
                 ActionKey = ActionKeys.PolicyApply,

@@ -57,6 +57,12 @@ public static class FilenameClassificationTagger
         return TagsByTier.TryGetValue(classificationTier, out var tag) ? tag + " " + untagged : untagged;
     }
 
+    // Reverse of BuildTaggedFileName - used when the filename-tagging grant is revoked/denied, so a
+    // previously-tagged file's name reverts to its original form instead of keeping a tag that no
+    // longer reflects an active decision. Same regex as BuildTaggedFileName's own untagging step, so
+    // the two can never recognize a tag differently from one another.
+    public static string StripTag(string fileName) => ExistingTagPrefix.Replace(fileName, "");
+
     // Reverse lookup: given arbitrary text that may contain one of this class's own tags somewhere
     // in it (e.g. "[Secret] Report.pdf - Adobe Acrobat", a print job's title), resolve the
     // classification tier it represents. Returns false if no recognized tag is present - callers

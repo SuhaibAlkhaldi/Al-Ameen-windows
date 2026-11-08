@@ -131,6 +131,64 @@ public sealed class BrowserPolicyManagerTests
         Assert.False(shouldBlock);
     }
 
+    // Covers the filename-tagging feature's gate: FileInventoryScanner.ApplyFilenameTag now reads
+    // ActionKeys.FilenameTagging via this same helper instead of the old local-only
+    // FileClassificationPolicy.FilenameTaggingEnabled flag, which PreserveLocalOnlySections
+    // silently discarded on every sync. An Organization-scoped backend grant and a Device-scoped
+    // one both arrive at the agent re-keyed to a DeviceId-subject grant (see AgentPolicyService's
+    // BuildGrantsForDeviceAsync on the backend) - this helper doesn't need to know which backend
+    // subject type produced it, same as ExtensionUnrestricted above.
+
+    [Fact]
+    public void NoGrant_FilenameTaggingIsBlocked()
+    {
+        var policy = CreatePolicy(ActionKeys.FilenameTagging, defaultAllowed: false);
+        var shouldBlock = BrowserPolicyManager.ShouldBlockForMissingGrant(
+            policy, _evaluator, ActionKeys.FilenameTagging, _context, _identity);
+        Assert.True(shouldBlock);
+    }
+
+    [Fact]
+    public void ActiveDeviceGrant_FilenameTaggingIsAllowed()
+    {
+        var policy = CreatePolicy(ActionKeys.FilenameTagging, defaultAllowed: false);
+        policy.Permissions.Grants.Add(new PermissionGrant
+        {
+            ActionKey = ActionKeys.FilenameTagging,
+            Allowed = true,
+            SubjectType = PermissionSubjectTypes.DeviceId,
+            SubjectId = _identity.DeviceId.ToString(),
+            Source = PermissionSources.PermanentPolicy,
+            StartsAtUtc = DateTimeOffset.UtcNow.AddMinutes(-1),
+            Priority = 500
+        });
+
+        var shouldBlock = BrowserPolicyManager.ShouldBlockForMissingGrant(
+            policy, _evaluator, ActionKeys.FilenameTagging, _context, _identity);
+        Assert.False(shouldBlock);
+    }
+
+    [Fact]
+    public void RevokedGrant_FilenameTaggingReblocks()
+    {
+        var policy = CreatePolicy(ActionKeys.FilenameTagging, defaultAllowed: false);
+        policy.Permissions.Grants.Add(new PermissionGrant
+        {
+            ActionKey = ActionKeys.FilenameTagging,
+            Allowed = true,
+            SubjectType = PermissionSubjectTypes.DeviceId,
+            SubjectId = _identity.DeviceId.ToString(),
+            Source = PermissionSources.PermanentPolicy,
+            StartsAtUtc = DateTimeOffset.UtcNow.AddMinutes(-10),
+            RevokedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-1),
+            Priority = 500
+        });
+
+        var shouldBlock = BrowserPolicyManager.ShouldBlockForMissingGrant(
+            policy, _evaluator, ActionKeys.FilenameTagging, _context, _identity);
+        Assert.True(shouldBlock);
+    }
+
     [Theory]
     [InlineData(ExtensionForceInstallStatus.Valid, true, false, true)]   // valid id + block requested + NOT unrestricted -> still blocks others
     [InlineData(ExtensionForceInstallStatus.Valid, true, true, false)]  // valid id + block requested BUT unrestricted overrides it -> does not block others

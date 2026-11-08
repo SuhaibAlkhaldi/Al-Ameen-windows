@@ -218,6 +218,7 @@ public sealed class FileInventoryScanner(
             // effect on its very next tick instead of waiting for the file to change some other way.
             ReevaluateWatermarkGrantForUnchangedFile(path, normalized, fullPolicy, policy, watermarkPolicy, context);
             await ReevaluateFileOpenProtectionForUnchangedFileAsync(path, normalized, fullPolicy, context, cancellationToken);
+            ReevaluateFilenameTaggingForUnchangedFile(path, normalized, fullPolicy, context);
             return;
         }
 
@@ -287,7 +288,7 @@ public sealed class FileInventoryScanner(
         if (cached is not null && !ProvisionalReasonCodes.Contains(cached.ReasonCode) && cached.RulesVersion == currentRulesVersion)
         {
             var scannedAtUtc = DateTimeOffset.UtcNow;
-            var (taggedPath, taggedNormalized) = ApplyFilenameTag(path, normalized, cached.Classification, policy);
+            var (taggedPath, taggedNormalized) = ApplyFilenameTag(path, normalized, cached.Classification, fullPolicy, context);
             var effectiveWriteTimeUtc = ApplyContentWatermarkIfEnabled(taggedPath, cached.Classification, hash, scannedAtUtc, fullPolicy, policy, watermarkPolicy, context, info.LastWriteTimeUtc);
             await ApplyAutoProtectionIfEnabled(taggedPath, cached.Classification, hash, fullPolicy, context, cancellationToken);
             _lastSeenWriteTimes.Remove(path);
@@ -355,7 +356,7 @@ public sealed class FileInventoryScanner(
             else
             {
                 var scannedAtUtc = DateTimeOffset.UtcNow;
-                var (taggedPath, taggedNormalized) = ApplyFilenameTag(path, normalized, result.Classification, policy);
+                var (taggedPath, taggedNormalized) = ApplyFilenameTag(path, normalized, result.Classification, fullPolicy, context);
                 var effectiveWriteTimeUtc = ApplyContentWatermarkIfEnabled(taggedPath, result.Classification, hash, scannedAtUtc, fullPolicy, policy, watermarkPolicy, context, info.LastWriteTimeUtc);
                 await ApplyAutoProtectionIfEnabled(taggedPath, result.Classification, hash, fullPolicy, context, cancellationToken);
                 _lastSeenWriteTimes.Remove(path);
@@ -380,19 +381,25 @@ public sealed class FileInventoryScanner(
     }
 
     // Renames the file to reflect its classification tier (see FilenameClassificationTagger) when
-    // the policy opts in. Returns the path/normalized-path callers should use from this point on -
-    // unchanged from the input if tagging is disabled, already correct, or the rename didn't happen
-    // (locked file, name collision) so the caller falls back to keeping the file under its old name
-    // and simply retries next tick, exactly like any other soft failure in this class.
-    private (string Path, string Normalized) ApplyFilenameTag(string path, string normalized, string classification, FileClassificationPolicy policy)
+    // granted (ActionKeys.FilenameTagging - see PermissionEvaluator), and strips any existing tag
+    // back off when not granted - by explicit product decision (2026-10-27) a revoke must remove the
+    // tag from already-tagged files, not just stop tagging new ones. Returns the path/normalized-
+    // path callers should use from this point on - unchanged from the input if already correct, or
+    // the rename didn't happen (locked file, name collision) so the caller falls back to keeping the
+    // file under its old name and simply retries next tick, exactly like any other soft failure in
+    // this class.
+    private (string Path, string Normalized) ApplyFilenameTag(string path, string normalized, string classification, DlpPolicy fullPolicy, ClientContext context)
     {
-        if (!policy.FilenameTaggingEnabled) return (path, normalized);
+        var identity = identityProvider.Get();
+        var granted = !BrowserPolicyManager.ShouldBlockForMissingGrant(fullPolicy, permissionEvaluator, ActionKeys.FilenameTagging, context, identity);
 
         var directory = Path.GetDirectoryName(path);
         var fileName = Path.GetFileName(path);
         if (string.IsNullOrEmpty(directory) || string.IsNullOrEmpty(fileName)) return (path, normalized);
 
-        var desiredFileName = FilenameClassificationTagger.BuildTaggedFileName(fileName, classification);
+        var desiredFileName = granted
+            ? FilenameClassificationTagger.BuildTaggedFileName(fileName, classification)
+            : FilenameClassificationTagger.StripTag(fileName);
         if (string.Equals(desiredFileName, fileName, StringComparison.Ordinal)) return (path, normalized);
 
         var desiredPath = Path.Combine(directory, desiredFileName);
@@ -411,6 +418,39 @@ public sealed class FileInventoryScanner(
         {
             logger.LogDebug(exception, "Could not rename {Path} to reflect its classification; will retry next scan.", path);
             return (path, normalized);
+        }
+    }
+
+    // The cheap re-check that runs on every tick for a file _lastSeenWriteTimes says is otherwise
+    // unchanged - mirrors ReevaluateWatermarkGrantForUnchangedFile's purpose exactly: ActionKeys.
+    // FilenameTagging's grant can be approved/revoked at any moment with the file's own bytes
+    // completely untouched, and without this call that fast path above would return before ever
+    // reaching ApplyFilenameTag again, leaving the file stuck on whatever the grant said the one
+    // time it was first classified. ApplyFilenameTag's own idempotency check (comparing the desired
+    // name to the current one) makes calling it here safe and cheap on every tick, including the
+    // (common) ones where nothing actually needs to rename.
+    private void ReevaluateFilenameTaggingForUnchangedFile(string path, string normalized, DlpPolicy fullPolicy, ClientContext context)
+    {
+        var existingStatus = statusStore.TryGet(normalized);
+        if (existingStatus?.LastClassifiedHash is not { } hash) return;
+
+        var cached = cache.TryGet(hash);
+        if (cached is null) return; // no cached tier to evaluate against - the next real classification pass will settle this
+
+        var (taggedPath, taggedNormalized) = ApplyFilenameTag(path, normalized, cached.Classification, fullPolicy, context);
+        if (taggedPath == path) return;
+
+        _lastSeenWriteTimes.Remove(path);
+        try
+        {
+            var writeTime = new FileInfo(taggedPath).LastWriteTimeUtc;
+            _lastSeenWriteTimes[taggedPath] = writeTime;
+            statusStore.Delete(normalized);
+            statusStore.Set(existingStatus with { Path = taggedNormalized, UpdatedAtUtc = DateTimeOffset.UtcNow, LastSeenWriteTimeUtc = writeTime });
+        }
+        catch (Exception exception)
+        {
+            logger.LogDebug(exception, "Renamed {Path} to reflect its classification but could not re-read its write time.", taggedPath);
         }
     }
 
