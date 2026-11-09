@@ -70,6 +70,25 @@ public sealed class WatermarkEscrowStore(PolicyStore policyStore, MachineDataPro
         }
     }
 
+    // The lookup FileInventoryScanner actually uses to find a PDF/image's own escrow record -
+    // keyed on the live file path rather than its content hash, because the tile layer's "Last
+    // Scanned: {timestamp}" text (see ContentWatermarker.BuildWatermarkTileText) changes the file's
+    // SHA-256 on every redraw. A hash-keyed lookup therefore stops finding its own record the moment
+    // a watermark has been drawn even once, making every later grant toggle look like "pristine
+    // content never seen before" - confirmed live 2026-11-03 to both silently no-op a hide and stack
+    // a duplicate watermark layer on the next toggle. The live path survives a watermark redraw
+    // untouched (only the bytes change), so it is the stable identity for "this file's escrow
+    // record" - see UpdateLivePath for keeping it correct across a rename too.
+    public WatermarkEscrowRecord? TryGetByLivePath(string livePath)
+    {
+        lock (_sync)
+        {
+            EnsureLoaded();
+            return _records!.Values.FirstOrDefault(record =>
+                record.LivePath.Equals(livePath, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
     public IReadOnlyList<WatermarkEscrowRecord> GetAll()
     {
         lock (_sync)

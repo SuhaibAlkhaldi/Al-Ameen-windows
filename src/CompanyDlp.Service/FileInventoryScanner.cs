@@ -411,7 +411,15 @@ public sealed class FileInventoryScanner(
 
         try
         {
+            // If this is a PDF/image already tracked in watermark escrow, its record's LivePath
+            // must follow the rename too - otherwise TryGetByLivePath stops finding it after this
+            // move, exactly the same "lost its own escrow record" failure this class's watermark
+            // lookup was fixed for (see WatermarkEscrowStore.TryGetByLivePath's comment).
+            var escrow = EscrowRequiredExtensions.Contains(Path.GetExtension(path))
+                ? escrowStore.TryGetByLivePath(path)
+                : null;
             File.Move(path, desiredPath);
+            if (escrow is not null) escrowStore.UpdateLivePath(escrow.EscrowId, desiredPath);
             return (desiredPath, FileClassificationStatusStore.NormalizePath(desiredPath));
         }
         catch (Exception exception)
@@ -543,7 +551,7 @@ public sealed class FileInventoryScanner(
         // comment) needs exactly one catch-up redraw too, even when the grant hasn't changed at all
         // and this file would otherwise sit in the "nothing to do" branch below forever.
         var tileFormatStale = EscrowRequiredExtensions.Contains(Path.GetExtension(path))
-            && escrowStore.TryGetByClassificationHash(hash) is { } escrow
+            && escrowStore.TryGetByLivePath(path) is { } escrow
             && escrow.TileFormatVersion != ContentWatermarker.CurrentTileFormatVersion;
 
         if (!tileFormatStale && _lastAppliedWatermarkGrantAllowed.TryGetValue(path, out var lastApplied) && lastApplied == allowed) return;
@@ -748,7 +756,9 @@ public sealed class FileInventoryScanner(
         }
 
         // PDF/images from here on - the escrow path (see WatermarkEscrowStore's class comment).
-        var escrow = escrowStore.TryGetByClassificationHash(classificationHash);
+        // Looked up by the file's live path, not its content hash - see TryGetByLivePath's comment
+        // for why a hash-keyed lookup silently breaks the moment a watermark has been drawn once.
+        var escrow = escrowStore.TryGetByLivePath(path);
 
         if (!hideWatermark)
         {
@@ -810,7 +820,7 @@ public sealed class FileInventoryScanner(
     // Captures a pristine escrow snapshot straight from a file's CURRENT, still-untouched bytes,
     // without touching the live file - called immediately before any watermark layer is about to be
     // drawn onto it for the very first time (see the !hideWatermark branch above). Only ever reached
-    // when TryGetByClassificationHash just returned null for this content, i.e. nothing has drawn a
+    // when TryGetByLivePath just returned null for this path, i.e. nothing has drawn a
     // watermark onto it yet. Reads the bytes directly rather than round-tripping through
     // ContentWatermarker.ApplyWatermark - the file at this point already IS the pristine reference
     // copy, and routing it through PdfSharp's Save() / GDI+'s Bitmap.Save() to draw nothing would
